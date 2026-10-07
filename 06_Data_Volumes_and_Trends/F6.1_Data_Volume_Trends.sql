@@ -1,0 +1,257 @@
+-- ============================================================================
+--  F6.1  Section 6.1 Data volume trends by module (6 monthly charts)
+--  Version   : 1.2 (2026-10-05). Chart 2 (purchase orders) "not cancelled" now
+--              also tests DOCUMENT_STATUS: R024 (V7_1 block B) showed CANCEL_FLAG
+--              is never set on this pod's POs (260 CANCELED POs, flag empty).
+--              R022's PO chart (840) may include cancelled POs. Nothing else changed.
+--              v1.1 (2026-10-05). v1.0 ran with blank dates (R022) and showed only
+--              4 months, because the chart was clamped to the 90-day default
+--              window. User rule: blank dates -> the last 6 months; entered
+--              dates -> held as entered. Only chart_win changed; counts,
+--              filters and scope are unchanged.
+--              V6_0 / V6_1 passed (R020 / R021). Log every run in 06_Run_Results/RUN_LOG.md.
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS agent _VOLUME_TREND_SQL / ebs_discover_data_volumes (agent
+--              2026-09-23; report 30-Sep-2026, Vision Oct-07 .. Mar-08, e.g. GL
+--              journals 161 / 183 / 199 / 262 / 94 / 86 - EBS numbers, not targets)
+--  Window    : always up to 6 calendar months, ending in the to-date month.
+--              * Dates entered: the LAST 6 MONTHS of the entered window (agent
+--                _trailing_window), never before the from-date.
+--                2025-04-01 .. 2026-03-31 -> Oct-25 .. Mar-26.
+--              * From-date blank: the 6 months ending in the to-date month
+--                (to-date blank = today, so the current month is partial).
+--                Run on 05-Oct-2026 with no dates -> May-26 .. Oct-26.
+--                This differs from every other windowed query, where blank
+--                dates mean the last 90 days.
+--  Scope     : the shared block - BUs of the ledger (orders, POs, AR, AP),
+--              inventory orgs of the ledger (work orders), the ledger (GL).
+--              Blank ledger / BU = the whole pod.
+--
+--  OUTPUT  long format, one row per module x month, ZEROS INCLUDED (the agent
+--          fills missing months with 0 the same way), ready for 6 bar charts:
+--    MODULE | MONTH (YYYY-MM) | MONTH_LABEL (Mon-YY) | COUNT
+--
+--  THE SIX CHARTS (EBS module -> Fusion; date and filter = the EBS rule)
+--    1 Sales Orders       OE_ORDER_HEADERS_ALL -> DOO_HEADERS_ALL, by ORDERED_DATE,
+--                         BU = ORG_ID. One per order: revisions collapsed to the
+--                         submitted version, the exact F4.2 rule. All orders,
+--                         returns included (EBS 6.1 has no category filter).
+--    2 Purchase Orders    PO_HEADERS_ALL, TYPE_LOOKUP_CODE = 'STANDARD', not
+--                         cancelled, by CREATION_DATE; in scope when the
+--                         procurement, requisitioning or bill-to BU is (F4.1 rule).
+--    3 Work Orders        EBS WIP_DISCRETE_JOBS -> WIE_WORK_ORDERS_B (Fusion
+--                         Manufacturing), by CREATION_DATE, inventory-org scope
+--                         (the F1 rule). EBS flags its WIP row as unvalidated;
+--                         treat this one the same way.
+--    4 Receivables Invoices  RA_CUSTOMER_TRX_ALL, COMPLETE_FLAG = 'Y', by TRX_DATE,
+--                         BU = ORG_ID (EBS: all complete transactions, not only
+--                         type INV - the EBS chart is titled "AR invoices").
+--    5 Payables Invoices  AP_INVOICES_ALL, not cancelled, by INVOICE_DATE,
+--                         BU = ORG_ID (F4.1 rule).
+--    6 GL Journals        GL_JE_HEADERS, STATUS = 'P', by CREATION_DATE, ledger
+--                         scope (F4.3 / F1 rule).
+--
+--  CHANGES AGAINST THE JUNE DRAFT (02_SQL_Existing 14_S6.1)
+--    * window: was a typed literal 2026-01-01 .. 2026-10-01 while the column
+--      headings said Apr-25 .. Sep-25; now derived from the run's dates.
+--    * months: was EXTRACT(MONTH) with no year (Jan-26 and Jan-25 collide);
+--      now TRUNC(date, 'MM').
+--    * dates: was CREATION_DATE for AP / AR / orders; now the EBS business dates.
+--    * scope: binds were mandatory (blank ledger = all zeros) and POs were
+--      pod-wide; now the shared scope block.
+--    * POs: the extra "sourced from a requisition" filter is removed (not in
+--      EBS 6.1). Orders: revision rows no longer counted as extra orders.
+--  Reconciles (enter the dates, so F6.1 and F4.x cover the same months; with
+--  blank dates F6.1 covers 6 months and F4.x 90 days): Sales Orders + RMA in F4.2
+--  = chart 1 total; F4.1 AP invoices = chart 5 total; F4.3 journals = chart 6
+--  total (F4.1 POs count BLANKET / PLANNED too, so chart 2 is a subset).
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- ---- chart window (v1.1, user rule 2026-10-05):
+--      from-date blank -> the 6 calendar months ending in the to-date month
+--                         (to-date blank = today), NOT the 90-day default;
+--      from-date given -> the last 6 months of the entered window, never
+--                         before the from-date (agent _trailing_window).
+chart_win AS (
+    SELECT CASE WHEN p.p_from_date IS NULL
+                THEN ADD_MONTHS(TRUNC(w.end_date_excl - 1, 'MM'), -5)
+                ELSE GREATEST(w.start_date,
+                              ADD_MONTHS(TRUNC(w.end_date_excl - 1, 'MM'), -5))
+           END                                                       AS start_date,
+           w.end_date_excl                                           AS end_date_excl
+    FROM        win    w
+    CROSS JOIN  params p
+),
+-- one row per calendar month in the chart window (at most 6)
+month_spine AS (
+    SELECT ADD_MONTHS(TRUNC(c.start_date, 'MM'), LEVEL - 1) AS month_start
+    FROM   chart_win c
+    CONNECT BY ADD_MONTHS(TRUNC(c.start_date, 'MM'), LEVEL - 1) < c.end_date_excl
+           AND LEVEL <= 6
+),
+module_list AS (
+    SELECT 1 AS seq, 'Sales Orders' AS module FROM dual
+    UNION ALL SELECT 2, 'Purchase Orders'      FROM dual
+    UNION ALL SELECT 3, 'Work Orders'          FROM dual
+    UNION ALL SELECT 4, 'Receivables Invoices' FROM dual
+    UNION ALL SELECT 5, 'Payables Invoices'    FROM dual
+    UNION ALL SELECT 6, 'GL Journals'          FROM dual
+),
+-- ---- 1 sales orders: one row per order (revisions collapsed, F4.2 rule) -------
+order_hdr AS (
+    SELECT dh.order_number,
+           dh.source_order_system,
+           MAX(dh.ordered_date) KEEP (DENSE_RANK FIRST ORDER BY
+               CASE WHEN dh.submitted_flag = 'Y' THEN 0 ELSE 1 END, dh.header_id DESC)
+                                                                    AS ordered_date,
+           MAX(dh.org_id) KEEP (DENSE_RANK FIRST ORDER BY
+               CASE WHEN dh.submitted_flag = 'Y' THEN 0 ELSE 1 END, dh.header_id DESC)
+                                                                    AS org_id
+    FROM   doo_headers_all dh
+    GROUP  BY dh.order_number, dh.source_order_system
+),
+so_months AS (
+    SELECT TRUNC(o.ordered_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   order_hdr o
+    JOIN   bu_scope  b ON b.bu_id = o.org_id
+    CROSS  JOIN chart_win c
+    WHERE  o.ordered_date >= c.start_date
+    AND    o.ordered_date <  c.end_date_excl
+    GROUP  BY TRUNC(o.ordered_date, 'MM')
+),
+-- ---- 2 purchase orders: STANDARD, not cancelled --------------------------------
+po_months AS (
+    SELECT TRUNC(ph.creation_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   po_headers_all ph
+    CROSS  JOIN chart_win c
+    WHERE  ph.type_lookup_code      = 'STANDARD'
+    AND    NVL(ph.cancel_flag, 'N') = 'N'
+    -- Fusion records cancellation in DOCUMENT_STATUS; CANCEL_FLAG stays empty (R024)
+    AND    REPLACE(UPPER(NVL(ph.document_status, 'OPEN')), '_', ' ')
+               NOT IN ('CANCELED', 'CANCELLED')
+    AND    ph.creation_date >= c.start_date
+    AND    ph.creation_date <  c.end_date_excl
+    AND    EXISTS ( SELECT 1
+                    FROM   bu_scope b
+                    WHERE  b.bu_id IN (ph.prc_bu_id, ph.req_bu_id, ph.billto_bu_id) )
+    GROUP  BY TRUNC(ph.creation_date, 'MM')
+),
+-- ---- 3 work orders (Fusion Manufacturing) --------------------------------------
+wo_months AS (
+    SELECT TRUNC(wo.creation_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   wie_work_orders_b wo
+    JOIN   inv_org_scope     ios ON ios.organization_id = wo.organization_id
+    CROSS  JOIN chart_win c
+    WHERE  wo.creation_date >= c.start_date
+    AND    wo.creation_date <  c.end_date_excl
+    GROUP  BY TRUNC(wo.creation_date, 'MM')
+),
+-- ---- 4 receivables invoices: complete transactions by transaction date -------
+ar_months AS (
+    SELECT TRUNC(ct.trx_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   ra_customer_trx_all ct
+    JOIN   bu_scope            b ON b.bu_id = ct.org_id
+    CROSS  JOIN chart_win c
+    WHERE  ct.complete_flag = 'Y'
+    AND    ct.trx_date >= c.start_date
+    AND    ct.trx_date <  c.end_date_excl
+    GROUP  BY TRUNC(ct.trx_date, 'MM')
+),
+-- ---- 5 payables invoices: not cancelled, by invoice date ------------------------
+ap_months AS (
+    SELECT TRUNC(ai.invoice_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   ap_invoices_all ai
+    JOIN   bu_scope        b ON b.bu_id = ai.org_id
+    CROSS  JOIN chart_win c
+    WHERE  ai.cancelled_date IS NULL
+    AND    ai.invoice_date >= c.start_date
+    AND    ai.invoice_date <  c.end_date_excl
+    GROUP  BY TRUNC(ai.invoice_date, 'MM')
+),
+-- ---- 6 GL journals: posted, by creation date ------------------------------------
+gl_months AS (
+    SELECT TRUNC(jh.creation_date, 'MM') AS month_start, COUNT(*) AS cnt
+    FROM   gl_je_headers jh
+    JOIN   led_scope     l ON l.ledger_id = jh.ledger_id
+    CROSS  JOIN chart_win c
+    WHERE  jh.status = 'P'
+    AND    jh.creation_date >= c.start_date
+    AND    jh.creation_date <  c.end_date_excl
+    GROUP  BY TRUNC(jh.creation_date, 'MM')
+),
+module_counts AS (
+    SELECT 1 AS seq, s.month_start, s.cnt FROM so_months s
+    UNION ALL
+    SELECT 2, p.month_start, p.cnt FROM po_months p
+    UNION ALL
+    SELECT 3, w.month_start, w.cnt FROM wo_months w
+    UNION ALL
+    SELECT 4, a.month_start, a.cnt FROM ar_months a
+    UNION ALL
+    SELECT 5, i.month_start, i.cnt FROM ap_months i
+    UNION ALL
+    SELECT 6, g.month_start, g.cnt FROM gl_months g
+)
+SELECT
+    m.module                                                  AS "MODULE",
+    TO_CHAR(ms.month_start, 'YYYY-MM')                        AS "MONTH",
+    TO_CHAR(ms.month_start, 'Mon-YY', 'NLS_DATE_LANGUAGE=ENGLISH') AS "MONTH_LABEL",
+    NVL(mc.cnt, 0)                                            AS "COUNT"
+FROM        module_list   m
+CROSS JOIN  month_spine   ms
+LEFT JOIN   module_counts mc ON mc.seq = m.seq
+                            AND mc.month_start = ms.month_start
+ORDER BY    m.seq, ms.month_start

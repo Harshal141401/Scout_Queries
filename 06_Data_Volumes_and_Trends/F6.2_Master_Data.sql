@@ -1,0 +1,217 @@
+-- ============================================================================
+--  F6.2  Section 6.2 Master data (active vs total)
+--  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--              RUN V6_0 AND V6_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS agent ebs_discover_data_volumes, master_data_quality (reshaped
+--              2026-09-10 on review: suppliers + sites, customer party / account
+--              / sites, items, internal bank accounts; Employees dropped).
+--              (report 30-Sep-2026, Vision: 425/426 | 1,469/1,476 | 1,013/1,023 |
+--              1,028/1,048 | 1,865/1,893 | 6,769/6,769 | 23/26 - EBS, not targets)
+--  Window    : SNAPSHOT (as of the run day). The dates are accepted and ignored.
+--  Scope     : rows 1-6 pod-wide (EBS: instance-wide). Row 7 (bank accounts)
+--              follows the bound ledger / BU - the same population as F3.1 row 10
+--              and the F3.1 CE bank accounts sheet (agent: "one account
+--              population for 3.1 count/detail and 6.2 active/total").
+--
+--  OUTPUT  Entity | Active | Total      (7 rows, EBS order)
+--
+--  ROWS (EBS table -> Fusion table; active rule)
+--    1 Suppliers          AP_SUPPLIERS -> POZ_SUPPLIERS (doc: PK VENDOR_ID).
+--                         Active = END_DATE_ACTIVE null or after today. EBS also
+--                         tested ENABLED_FLAG; in Fusion that column is "OBSOLETE"
+--                         (Oracle doc, 25D), so it is not used.
+--    2 Supplier sites     AP_SUPPLIER_SITES_ALL -> POZ_SUPPLIER_SITES_ALL_M (doc:
+--                         PK VENDOR_SITE_ID). Active = INACTIVE_DATE null or after
+--                         today. The table also carries effective-date columns,
+--                         so sites are grouped on VENDOR_SITE_ID (a site counts
+--                         once, and is active if any of its rows is).
+--    3 Customer parties   HZ_PARTIES that own at least one HZ_CUST_ACCOUNTS row;
+--                         active = party STATUS 'A'.
+--    4 Customer accounts  HZ_CUST_ACCOUNTS; active = STATUS 'A'.
+--    5 Customer sites     HZ_CUST_ACCT_SITES_ALL (set-enabled in Fusion), one per
+--                         CUST_ACCT_SITE_ID; active = STATUS 'A'.
+--    6 Items              MTL_SYSTEM_ITEMS_B -> EGP_SYSTEM_ITEMS_B, one per
+--                         INVENTORY_ITEM_ID; active = enabled in at least one org.
+--                         Item TEMPLATES are rows of this table in Fusion
+--                         (TEMPLATE_ITEM_FLAG = 'Y') and are excluded - in EBS
+--                         they live in a separate table (same rule as F4.4).
+--    7 Internal bank accounts  CE_BANK_ACCOUNTS, ACCOUNT_CLASSIFICATION =
+--                         'INTERNAL'; active = END_DATE null or after today.
+--                         Ledger / BU bound: only accounts used by an in-scope BU
+--                         (CE_BANK_ACCT_USES_ALL), each counted once. F3.1 rule,
+--                         verbatim, so Active here = F3.1 row 10.
+--
+--  CHANGES AGAINST THE JUNE DRAFT (02_SQL_Existing 15_S6.2)
+--    * rows: Employees and BOM dropped (not in EBS 6.2); Supplier sites,
+--      Customer accounts and Customer sites added.
+--    * customers: was every ORGANIZATION party (that includes suppliers, banks
+--      and legal entities); now parties that own a customer account.
+--    * items: COUNT(DISTINCT) replaced by GROUP BY (house rule); templates excluded.
+--    * bank accounts: was every CE bank account incl. external ones; now
+--      INTERNAL only, active = not end-dated, scoped like F3.1.
+--    * output: was a formatted text label; now numeric Active and Total columns.
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- bound = a ledger or BU was entered (copied from F3.1)
+scope_flag AS (
+    SELECT CASE WHEN p.p_ledger_id IS NULL AND p.p_bu_id IS NULL
+                THEN 0 ELSE 1 END                          AS is_bound
+    FROM   params p
+),
+-- ---- 1 suppliers ---------------------------------------------------------------
+supp_cnt AS (
+    SELECT NVL(SUM(CASE WHEN ps.end_date_active IS NULL
+                          OR ps.end_date_active > SYSDATE
+                        THEN 1 ELSE 0 END), 0)             AS n_active,
+           COUNT(*)                                        AS n_total
+    FROM   poz_suppliers ps
+),
+-- ---- 2 supplier sites (one per VENDOR_SITE_ID) ------------------------------
+site_keyed AS (
+    SELECT ss.vendor_site_id,
+           MAX(CASE WHEN ss.inactive_date IS NULL
+                      OR ss.inactive_date > SYSDATE
+                    THEN 1 ELSE 0 END)                     AS is_active
+    FROM   poz_supplier_sites_all_m ss
+    GROUP  BY ss.vendor_site_id
+),
+site_cnt AS (
+    SELECT NVL(SUM(k.is_active), 0) AS n_active, COUNT(*) AS n_total
+    FROM   site_keyed k
+),
+-- ---- 3 customer parties: parties that own at least one customer account -------
+cust_party_ids AS (
+    SELECT hca.party_id
+    FROM   hz_cust_accounts hca
+    WHERE  hca.party_id IS NOT NULL
+    GROUP  BY hca.party_id
+),
+party_cnt AS (
+    SELECT NVL(SUM(CASE WHEN hp.status = 'A' THEN 1 ELSE 0 END), 0) AS n_active,
+           COUNT(*)                                                 AS n_total
+    FROM   cust_party_ids cp
+    JOIN   hz_parties     hp ON hp.party_id = cp.party_id
+),
+-- ---- 4 customer accounts --------------------------------------------------------
+acct_cnt AS (
+    SELECT NVL(SUM(CASE WHEN hca.status = 'A' THEN 1 ELSE 0 END), 0) AS n_active,
+           COUNT(*)                                                  AS n_total
+    FROM   hz_cust_accounts hca
+),
+-- ---- 5 customer sites (one per CUST_ACCT_SITE_ID) ------------------------------
+csite_keyed AS (
+    SELECT cs.cust_acct_site_id,
+           MAX(CASE WHEN cs.status = 'A' THEN 1 ELSE 0 END) AS is_active
+    FROM   hz_cust_acct_sites_all cs
+    GROUP  BY cs.cust_acct_site_id
+),
+csite_cnt AS (
+    SELECT NVL(SUM(k.is_active), 0) AS n_active, COUNT(*) AS n_total
+    FROM   csite_keyed k
+),
+-- ---- 6 items: one per item, templates excluded ---------------------------------
+item_keyed AS (
+    SELECT i.inventory_item_id,
+           MAX(CASE WHEN i.enabled_flag = 'Y' THEN 1 ELSE 0 END) AS is_active
+    FROM   egp_system_items_b i
+    WHERE  NVL(i.template_item_flag, 'N') <> 'Y'
+    GROUP  BY i.inventory_item_id
+),
+item_cnt AS (
+    SELECT NVL(SUM(k.is_active), 0) AS n_active, COUNT(*) AS n_total
+    FROM   item_keyed k
+),
+-- ---- 7 internal bank accounts (F3.1 row 10 population) ---------------------------
+bank_pop AS (
+    SELECT ba.bank_account_id,
+           CASE WHEN NVL(ba.end_date, SYSDATE + 1) > SYSDATE THEN 1 ELSE 0 END AS is_active
+    FROM        ce_bank_accounts ba
+    CROSS JOIN  scope_flag f
+    WHERE       ba.account_classification = 'INTERNAL'
+    AND         ( f.is_bound = 0
+                  OR EXISTS ( SELECT 1
+                              FROM   ce_bank_acct_uses_all u
+                              JOIN   bu_scope b ON b.bu_id = u.org_id
+                              WHERE  u.bank_account_id = ba.bank_account_id ) )
+),
+bank_cnt AS (
+    SELECT NVL(SUM(bp.is_active), 0) AS n_active, COUNT(*) AS n_total
+    FROM   bank_pop bp
+),
+grid AS (
+    SELECT 1 AS seq, CAST('Suppliers' AS VARCHAR2(100)) AS entity,
+           s.n_active, s.n_total
+    FROM   supp_cnt s
+    UNION ALL
+    SELECT 2, TO_CHAR('Supplier sites'), t.n_active, t.n_total FROM site_cnt t
+    UNION ALL
+    SELECT 3, TO_CHAR('Customer parties'), pc.n_active, pc.n_total FROM party_cnt pc
+    UNION ALL
+    SELECT 4, TO_CHAR('Customer accounts'), ac.n_active, ac.n_total FROM acct_cnt ac
+    UNION ALL
+    SELECT 5, TO_CHAR('Customer sites'), cc.n_active, cc.n_total FROM csite_cnt cc
+    UNION ALL
+    SELECT 6, TO_CHAR('Items'), ic.n_active, ic.n_total FROM item_cnt ic
+    UNION ALL
+    SELECT 7, TO_CHAR('Internal bank accounts'), bc.n_active, bc.n_total FROM bank_cnt bc
+)
+SELECT
+    g.entity                                                  AS "Entity",
+    g.n_active                                                AS "Active",
+    g.n_total                                                 AS "Total"
+FROM        grid g
+ORDER BY    g.seq

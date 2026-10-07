@@ -1,0 +1,313 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" defaultDataSourceRef="Oracle BI EE">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="Payment_terms_1" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F3.1 WB  Payment Terms workbook - sheet "AP Payment Terms"
+--  Workbook  : Fusion_Discovery_3_1_Payment_Terms.xlsx
+--              (EBS: EBS_Discovery_3_1_Payment_Terms.xlsx, sheets AP + AR)
+--  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--              RUN V3_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Mirrors   : EBS agent _PAYMENT_TERMS_DETAIL_SQL, AP half (2026-09-23)
+--
+--  GRAIN   one row per (term, installment). A term with no lines still gets
+--          one row. Several installments = several rows for one term.
+--  RECONCILES  distinct terms on this sheet = F3.1 row 1 "AP Payment Terms"
+--              (both read every row of AP_TERMS_B). The row count is higher
+--              when terms have more than one installment - that is the grain,
+--              not a mismatch (EBS sheet: 41 terms -> more rows).
+--
+--  COLUMNS (EBS order) TERM_NAME, DESCRIPTION, TYPE, STATUS, DOCUMENTS_USING,
+--    MASTER_DEFAULTS, START/END_DATE_ACTIVE, DUE_CUTOFF_DAY, INSTALLMENT,
+--    DUE_DAYS, DUE_DAY_OF_MONTH, DUE_MONTHS_FORWARD, DISCOUNT_PERCENT,
+--    DISCOUNT_DAYS
+--    STATUS           Active = ENABLED_FLAG Y and today inside the date range
+--    DOCUMENTS_USING  AP invoices + purchase orders pointing at the term
+--    MASTER_DEFAULTS  supplier sites defaulting to the term
+--    Both usage columns are TERM-level: they repeat on every installment row
+--    of the same term - never sum them down the sheet.
+--
+--  FUSION PORT (columns verified on the Oracle Fusion Tables and Views pages
+--  2026-10-05; V3_1 re-checks them on the pod)
+--    EBS read AP_TERMS_TL (no _B on Vision). Fusion has AP_TERMS_B (PK
+--    TERM_ID, ENABLED_FLAG, TYPE, dates) - the row population. Name and
+--    description come from AP_TERMS_TL with ONE language picked per term
+--    (session language first, then 'US'), so a term translated into two
+--    languages cannot become two rows.
+--    AP_TERMS_LINES: PK TERM_ID + SEQUENCE_NUM; AP keeps the discount on the
+--    line (DISCOUNT_PERCENT / DISCOUNT_DAYS), same as EBS.
+--    Supplier sites: EBS AP_SUPPLIER_SITES_ALL -> Fusion
+--    POZ_SUPPLIER_SITES_ALL_M (PK VENDOR_SITE_ID, TERMS_ID).
+--    Usage is pre-aggregated in CTEs (one pass per source table), never a
+--    scalar subquery per output row.
+--
+--  SCOPE   pod-wide, no binds used (terms carry no BU or ledger - EBS parity).
+--          The five standard binds are accepted for BIP parity.
+-- ============================================================================
+WITH
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- one name / description per term: session language first, then 'US'
+ap_term_lang AS (
+    SELECT  t.term_id,
+            MAX(t.name) KEEP (DENSE_RANK FIRST ORDER BY
+                CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)  AS term_name,
+            MAX(t.description) KEEP (DENSE_RANK FIRST ORDER BY
+                CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)  AS term_desc
+    FROM    ap_terms_tl t
+    WHERE   t.language IN (USERENV('LANG'), 'US')
+    GROUP   BY t.term_id
+),
+-- documents referencing the term: AP invoices + purchase orders
+ap_doc_use AS (
+    SELECT  terms_id, SUM(n) AS docs
+    FROM  ( SELECT ai.terms_id, COUNT(*) AS n
+            FROM   ap_invoices_all ai
+            WHERE  ai.terms_id IS NOT NULL
+            GROUP  BY ai.terms_id
+            UNION ALL
+            SELECT ph.terms_id, COUNT(*)
+            FROM   po_headers_all ph
+            WHERE  ph.terms_id IS NOT NULL
+            GROUP  BY ph.terms_id )
+    GROUP   BY terms_id
+),
+-- master records defaulting to the term: supplier sites
+ap_master_use AS (
+    SELECT  ss.terms_id, COUNT(*) AS defaults_cnt
+    FROM    poz_supplier_sites_all_m ss
+    WHERE   ss.terms_id IS NOT NULL
+    GROUP   BY ss.terms_id
+)
+SELECT
+    l.term_name                                               AS "TERM_NAME",
+    l.term_desc                                               AS "DESCRIPTION",
+    NVL(b.type, '-')                                          AS "TYPE",
+    CASE WHEN NVL(b.enabled_flag, 'Y') = 'Y'
+          AND NVL(b.start_date_active, TRUNC(SYSDATE)) <= TRUNC(SYSDATE)
+          AND NVL(b.end_date_active,   TRUNC(SYSDATE)) >= TRUNC(SYSDATE)
+         THEN 'Active' ELSE 'Inactive'
+    END                                                       AS "STATUS",
+    NVL(du.docs, 0)                                           AS "DOCUMENTS_USING",
+    NVL(mu.defaults_cnt, 0)                                   AS "MASTER_DEFAULTS",
+    TO_CHAR(b.start_date_active, 'YYYY-MM-DD')                AS "START_DATE_ACTIVE",
+    TO_CHAR(b.end_date_active,   'YYYY-MM-DD')                AS "END_DATE_ACTIVE",
+    b.due_cutoff_day                                          AS "DUE_CUTOFF_DAY",
+    ln.sequence_num                                           AS "INSTALLMENT",
+    ln.due_days                                               AS "DUE_DAYS",
+    ln.due_day_of_month                                       AS "DUE_DAY_OF_MONTH",
+    ln.due_months_forward                                     AS "DUE_MONTHS_FORWARD",
+    ln.discount_percent                                       AS "DISCOUNT_PERCENT",
+    ln.discount_days                                          AS "DISCOUNT_DAYS"
+FROM        ap_terms_b     b
+LEFT JOIN   ap_term_lang   l  ON l.term_id   = b.term_id
+LEFT JOIN   ap_terms_lines ln ON ln.term_id  = b.term_id
+LEFT JOIN   ap_doc_use     du ON du.terms_id = b.term_id
+LEFT JOIN   ap_master_use  mu ON mu.terms_id = b.term_id
+ORDER BY    l.term_name, b.term_id, ln.sequence_num
+]]>
+         </sql>
+      </dataSet>
+      <dataSet name="Payment_Terms_2" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F3.1 WB  Payment Terms workbook - sheet "AR Payment Terms"
+--  Workbook  : Fusion_Discovery_3_1_Payment_Terms.xlsx
+--  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--              RUN V3_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Mirrors   : EBS agent _PAYMENT_TERMS_DETAIL_SQL, AR half (2026-09-23)
+--
+--  GRAIN   one row per (term, installment); a term with no lines gets one row.
+--  RECONCILES  distinct terms on this sheet = F3.1 row 2 "AR Payment Terms"
+--              (both read every row of RA_TERMS_B).
+--
+--  COLUMNS  same as the AP sheet (EBS keeps both sheets the same shape), plus
+--    REFERENCE_SET after DESCRIPTION: Fusion AR terms belong to a reference
+--    data SET (RA_TERMS_B.SET_ID), so the same term name can exist in two sets.
+--    TYPE prints '-' (AR has no TYPE column, EBS parity).
+--    STATUS  Active = today inside the date range (AR has no ENABLED_FLAG).
+--    DOCUMENTS_USING  AR transactions pointing at the term
+--    MASTER_DEFAULTS  customer site uses + CURRENT customer profiles
+--    Usage columns are term-level and repeat per installment - never sum.
+--
+--  FUSION PORT (verified on the Oracle pages 2026-10-05; V3_1 re-checks)
+--    RA_TERMS_B carries NAME and DESCRIPTION itself (plus SET_ID), so no
+--    _TL join is needed for the name.
+--    RA_TERMS_LINES: PK TERM_ID + SEQUENCE_NUM.
+--    RA_TERMS_LINES_DISCOUNTS: PK TERMS_LINES_DISCOUNT_ID - several discount
+--    tiers per installment are possible, so they are collapsed to ONE row per
+--    (term, installment): the largest DISCOUNT_PERCENT, with DISCOUNT_DAYS
+--    taken from that SAME tier (KEEP DENSE_RANK FIRST) - EBS rule unchanged.
+--    HZ_CUSTOMER_PROFILES_F is DATE-EFFECTIVE (PK includes
+--    EFFECTIVE_START_DATE / EFFECTIVE_END_DATE): only the row current today
+--    is counted, otherwise every historical version of a profile would count.
+--    HZ_CUST_SITE_USES_ALL.PAYMENT_TERM_ID as in EBS.
+--    Reference set code: FND_SETID_SETS_VL (one row per set); if the set has
+--    no row in the session language the SET_ID itself is printed.
+--
+--  SCOPE   pod-wide (terms carry no BU or ledger - EBS parity).
+-- ============================================================================
+WITH
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+set_names AS (
+    SELECT  s.set_id, MAX(s.set_code) AS set_code
+    FROM    fnd_setid_sets_vl s
+    GROUP   BY s.set_id
+),
+-- one discount row per (term, installment): largest percent, its own days
+ar_disc AS (
+    SELECT  d.term_id,
+            d.sequence_num,
+            MAX(d.discount_percent)                                AS discount_percent,
+            MAX(d.discount_days) KEEP (DENSE_RANK FIRST
+                ORDER BY d.discount_percent DESC NULLS LAST)        AS discount_days
+    FROM    ra_terms_lines_discounts d
+    GROUP   BY d.term_id, d.sequence_num
+),
+-- documents referencing the term: AR transactions
+ar_doc_use AS (
+    SELECT  ct.term_id, COUNT(*) AS docs
+    FROM    ra_customer_trx_all ct
+    WHERE   ct.term_id IS NOT NULL
+    GROUP   BY ct.term_id
+),
+-- master records defaulting to the term: site uses + current profiles
+ar_master_use AS (
+    SELECT  term_id, SUM(n) AS defaults_cnt
+    FROM  ( SELECT su.payment_term_id AS term_id, COUNT(*) AS n
+            FROM   hz_cust_site_uses_all su
+            WHERE  su.payment_term_id IS NOT NULL
+            GROUP  BY su.payment_term_id
+            UNION ALL
+            SELECT cp.standard_terms, COUNT(*)
+            FROM   hz_customer_profiles_f cp
+            WHERE  cp.standard_terms IS NOT NULL
+            AND    TRUNC(SYSDATE) BETWEEN cp.effective_start_date
+                                      AND cp.effective_end_date
+            GROUP  BY cp.standard_terms )
+    GROUP   BY term_id
+)
+SELECT
+    b.name                                                    AS "TERM_NAME",
+    b.description                                             AS "DESCRIPTION",
+    NVL(sn.set_code, TO_CHAR(b.set_id))                       AS "REFERENCE_SET",
+    '-'                                                       AS "TYPE",
+    CASE WHEN b.start_date_active <= TRUNC(SYSDATE)
+          AND NVL(b.end_date_active, TRUNC(SYSDATE)) >= TRUNC(SYSDATE)
+         THEN 'Active' ELSE 'Inactive'
+    END                                                       AS "STATUS",
+    NVL(du.docs, 0)                                           AS "DOCUMENTS_USING",
+    NVL(mu.defaults_cnt, 0)                                   AS "MASTER_DEFAULTS",
+    TO_CHAR(b.start_date_active, 'YYYY-MM-DD')                AS "START_DATE_ACTIVE",
+    TO_CHAR(b.end_date_active,   'YYYY-MM-DD')                AS "END_DATE_ACTIVE",
+    b.due_cutoff_day                                          AS "DUE_CUTOFF_DAY",
+    ln.sequence_num                                           AS "INSTALLMENT",
+    ln.due_days                                               AS "DUE_DAYS",
+    ln.due_day_of_month                                       AS "DUE_DAY_OF_MONTH",
+    ln.due_months_forward                                     AS "DUE_MONTHS_FORWARD",
+    ad.discount_percent                                       AS "DISCOUNT_PERCENT",
+    ad.discount_days                                          AS "DISCOUNT_DAYS"
+FROM        ra_terms_b     b
+LEFT JOIN   set_names      sn ON sn.set_id      = b.set_id
+LEFT JOIN   ra_terms_lines ln ON ln.term_id     = b.term_id
+LEFT JOIN   ar_disc        ad ON ad.term_id     = ln.term_id
+                             AND ad.sequence_num = ln.sequence_num
+LEFT JOIN   ar_doc_use     du ON du.term_id     = b.term_id
+LEFT JOIN   ar_master_use  mu ON mu.term_id     = b.term_id
+ORDER BY    b.name, b.term_id, ln.sequence_num
+]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="Payment_terms_1">
+               <element name="TERM_NAME" value="TERM_NAME" label="TERM_NAME" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="DESCRIPTION" value="DESCRIPTION" label="DESCRIPTION" dataType="xsd:string" breakOrder="" fieldOrder="2"/>
+               <element name="TYPE" value="TYPE" label="TYPE" dataType="xsd:string" breakOrder="" fieldOrder="3"/>
+               <element name="STATUS" value="STATUS" label="STATUS" dataType="xsd:string" breakOrder="" fieldOrder="4"/>
+               <element name="DOCUMENTS_USING" value="DOCUMENTS_USING" label="DOCUMENTS_USING" dataType="xsd:double" breakOrder="" fieldOrder="5"/>
+               <element name="MASTER_DEFAULTS" value="MASTER_DEFAULTS" label="MASTER_DEFAULTS" dataType="xsd:double" breakOrder="" fieldOrder="6"/>
+               <element name="START_DATE_ACTIVE" value="START_DATE_ACTIVE" label="START_DATE_ACTIVE" dataType="xsd:string" breakOrder="" fieldOrder="7"/>
+               <element name="END_DATE_ACTIVE" value="END_DATE_ACTIVE" label="END_DATE_ACTIVE" dataType="xsd:string" breakOrder="" fieldOrder="8"/>
+               <element name="DUE_CUTOFF_DAY" value="DUE_CUTOFF_DAY" label="DUE_CUTOFF_DAY" dataType="xsd:double" breakOrder="" fieldOrder="9"/>
+               <element name="INSTALLMENT" value="INSTALLMENT" label="INSTALLMENT" dataType="xsd:double" breakOrder="" fieldOrder="10"/>
+               <element name="DUE_DAYS" value="DUE_DAYS" label="DUE_DAYS" dataType="xsd:double" breakOrder="" fieldOrder="11"/>
+               <element name="DUE_DAY_OF_MONTH" value="DUE_DAY_OF_MONTH" label="DUE_DAY_OF_MONTH" dataType="xsd:double" breakOrder="" fieldOrder="12"/>
+               <element name="DUE_MONTHS_FORWARD" value="DUE_MONTHS_FORWARD" label="DUE_MONTHS_FORWARD" dataType="xsd:double" breakOrder="" fieldOrder="13"/>
+               <element name="DISCOUNT_PERCENT" value="DISCOUNT_PERCENT" label="DISCOUNT_PERCENT" dataType="xsd:double" breakOrder="" fieldOrder="14"/>
+               <element name="DISCOUNT_DAYS" value="DISCOUNT_DAYS" label="DISCOUNT_DAYS" dataType="xsd:double" breakOrder="" fieldOrder="15"/>
+            </group>
+            <group name="G_2" label="G_2" source="Payment_Terms_2">
+               <element name="TERM_NAME" value="TERM_NAME" label="TERM_NAME" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="DESCRIPTION" value="DESCRIPTION" label="DESCRIPTION" dataType="xsd:string" breakOrder="" fieldOrder="2"/>
+               <element name="REFERENCE_SET" value="REFERENCE_SET" label="REFERENCE_SET" dataType="xsd:string" breakOrder="" fieldOrder="3"/>
+               <element name="TYPE" value="TYPE" label="TYPE" dataType="xsd:string" breakOrder="" fieldOrder="4"/>
+               <element name="STATUS" value="STATUS" label="STATUS" dataType="xsd:string" breakOrder="" fieldOrder="5"/>
+               <element name="DOCUMENTS_USING" value="DOCUMENTS_USING" label="DOCUMENTS_USING" dataType="xsd:double" breakOrder="" fieldOrder="6"/>
+               <element name="MASTER_DEFAULTS" value="MASTER_DEFAULTS" label="MASTER_DEFAULTS" dataType="xsd:double" breakOrder="" fieldOrder="7"/>
+               <element name="START_DATE_ACTIVE" value="START_DATE_ACTIVE" label="START_DATE_ACTIVE" dataType="xsd:string" breakOrder="" fieldOrder="8"/>
+               <element name="END_DATE_ACTIVE" value="END_DATE_ACTIVE" label="END_DATE_ACTIVE" dataType="xsd:string" breakOrder="" fieldOrder="9"/>
+               <element name="DUE_CUTOFF_DAY" value="DUE_CUTOFF_DAY" label="DUE_CUTOFF_DAY" dataType="xsd:double" breakOrder="" fieldOrder="10"/>
+               <element name="INSTALLMENT" value="INSTALLMENT" label="INSTALLMENT" dataType="xsd:double" breakOrder="" fieldOrder="11"/>
+               <element name="DUE_DAYS" value="DUE_DAYS" label="DUE_DAYS" dataType="xsd:double" breakOrder="" fieldOrder="12"/>
+               <element name="DUE_DAY_OF_MONTH" value="DUE_DAY_OF_MONTH" label="DUE_DAY_OF_MONTH" dataType="xsd:double" breakOrder="" fieldOrder="13"/>
+               <element name="DUE_MONTHS_FORWARD" value="DUE_MONTHS_FORWARD" label="DUE_MONTHS_FORWARD" dataType="xsd:double" breakOrder="" fieldOrder="14"/>
+               <element name="DISCOUNT_PERCENT" value="DISCOUNT_PERCENT" label="DISCOUNT_PERCENT" dataType="xsd:double" breakOrder="" fieldOrder="15"/>
+               <element name="DISCOUNT_DAYS" value="DISCOUNT_DAYS" label="DISCOUNT_DAYS" dataType="xsd:double" breakOrder="" fieldOrder="16"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="Payment_terms_1" left="280px" top="0px"/>
+         <layout name="Payment_Terms_2" left="560px" top="0px"/>
+         <layout name="DATA_DS" left="0px" top="267px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>

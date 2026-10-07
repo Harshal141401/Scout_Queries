@@ -1,0 +1,335 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" defaultDataSourceRef="Oracle BI EE">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="generate_output_format" value="xml"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="Executive_Summary" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F0  Executive Summary - 5 headline cards
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS 0_Executive_Summary_v2.sql (report 30-Sep-2026: 37/1/6/4/16)
+--  Replaces  : Fusion draft Executive_Summary.sql, which is NOT the same metric
+--              set: it counted ALL active users (not users who transacted),
+--              every BU and ledger pod-wide, an unfiltered ESS count (171,044
+--              on the dev pod) and a HARD-CODED Integrations = 97.
+--
+--  PARAMETERS  same five as F1, all optional (see F1 header)
+--
+--  OUTPUT  metric_name | metric_count, 5 rows
+--    1 Users who transacted  distinct users across the F1 modules, in scope
+--                            and window, de-duplicated ACROSS modules
+--                            (Intercompany excluded, EBS parity)
+--    2 Ledgers               the bound ledger; all real ledgers (not ledger
+--                            sets) when blank
+--    3 Legal Entities        LEs assigned to the ledger(s) in scope
+--                            (GL_LEDGER_LE_V, grouped - it is ledger x LE x
+--                            registration location)
+--    4 Business Units        same metric as the EBS "Operating Units" card, in
+--                            Fusion terms (Fusion has no operating units): the
+--                            active BUs whose primary ledger is in scope,
+--                            narrowed by :p_bu_id
+--    5 Active Modules        how many of the 16 F1 modules are Active. By
+--                            construction equals the count of 'Active' rows
+--                            in F1 - same rows, same window, same scope.
+--
+--  THE BLOCK FROM "params" TO "txn" IS COPIED BYTE-FOR-BYTE FROM F1.
+--  Edit F1 and regenerate this file, never the other way round, or the
+--  Users card and Section 1.1 stop agreeing.
+
+--  RUN V0_1 AND V0_2 FIRST. Nothing here has been run on a Fusion pod yet.
+-- ============================================================================
+WITH
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- ---- ACTIVITY ROWS: identical in F0 and F1 -------------------------------
+--  One row per transaction document in scope and window. seq = module.
+txn AS (
+    -- 1 General Ledger: journal headers created in the window
+    SELECT 1 AS seq, jh.created_by AS who
+    FROM   gl_je_headers jh
+    JOIN   led_scope l ON l.ledger_id = jh.ledger_id
+    CROSS  JOIN win w
+    WHERE  jh.creation_date >= w.start_date
+    AND    jh.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 2 Payables: invoices by invoice date (business date, EBS parity)
+    SELECT 2, ai.created_by
+    FROM   ap_invoices_all ai
+    JOIN   bu_scope b ON b.bu_id = ai.org_id
+    CROSS  JOIN win w
+    WHERE  ai.invoice_date >= w.start_date
+    AND    ai.invoice_date <  w.end_date_excl
+    UNION ALL
+    -- 3 Receivables: transactions by transaction date
+    SELECT 3, ct.created_by
+    FROM   ra_customer_trx_all ct
+    JOIN   bu_scope b ON b.bu_id = ct.org_id
+    CROSS  JOIN win w
+    WHERE  ct.trx_date >= w.start_date
+    AND    ct.trx_date <  w.end_date_excl
+    UNION ALL
+    -- 4 Purchasing: purchase order headers (any document type)
+    SELECT 4, ph.created_by
+    FROM   po_headers_all ph
+    CROSS  JOIN win w
+    WHERE  ph.creation_date >= w.start_date
+    AND    ph.creation_date <  w.end_date_excl
+    AND    EXISTS ( SELECT 1
+                    FROM   bu_scope b
+                    WHERE  b.bu_id IN (ph.prc_bu_id, ph.req_bu_id, ph.billto_bu_id) )
+    UNION ALL
+    -- 4 Purchasing: requisition headers (same module, EBS parity)
+    SELECT 4, rh.created_by
+    FROM   por_requisition_headers_all rh
+    JOIN   bu_scope b ON b.bu_id = rh.req_bu_id
+    CROSS  JOIN win w
+    WHERE  rh.creation_date >= w.start_date
+    AND    rh.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 5 Order Management: order headers by ordered date
+    SELECT 5, dh.created_by
+    FROM   doo_headers_all dh
+    JOIN   bu_scope b ON b.bu_id = dh.org_id
+    CROSS  JOIN win w
+    WHERE  dh.ordered_date >= w.start_date
+    AND    dh.ordered_date <  w.end_date_excl
+    UNION ALL
+    -- 6 Inventory: material transactions by transaction date
+    SELECT 6, imt.created_by
+    FROM   inv_material_txns imt
+    JOIN   inv_org_scope ios ON ios.organization_id = imt.organization_id
+    CROSS  JOIN win w
+    WHERE  imt.transaction_date >= w.start_date
+    AND    imt.transaction_date <  w.end_date_excl
+    UNION ALL
+    -- 7 Cash Management: bank statements on accounts used by a BU in scope.
+    --   EXISTS, not JOIN: an account used by three BUs must not count three times.
+    SELECT 7, csh.created_by
+    FROM   ce_statement_headers csh
+    CROSS  JOIN win w
+    WHERE  csh.creation_date >= w.start_date
+    AND    csh.creation_date <  w.end_date_excl
+    AND    EXISTS ( SELECT 1
+                    FROM   ce_bank_acct_uses_all u
+                    JOIN   bu_scope b ON b.bu_id = u.org_id
+                    WHERE  u.bank_account_id = csh.bank_account_id )
+    UNION ALL
+    -- 8 Cost Management: cost distributions (costing's own accounting output,
+    --   so a cost accountant who never moved stock still counts - EBS parity)
+    SELECT 8, cd.created_by
+    FROM   cst_cost_distributions cd
+    JOIN   led_scope l ON l.ledger_id = cd.ledger_id
+    CROSS  JOIN win w
+    WHERE  cd.gl_date >= w.start_date
+    AND    cd.gl_date <  w.end_date_excl
+    UNION ALL
+    -- 9 Assets: asset transactions on the ledger's books
+    SELECT 9, fth.last_updated_by
+    FROM   fa_transaction_headers fth
+    JOIN   fa_book_scope fb ON fb.book_type_code = fth.book_type_code
+    CROSS  JOIN win w
+    WHERE  fth.transaction_date_entered >= w.start_date
+    AND    fth.transaction_date_entered <  w.end_date_excl
+    UNION ALL
+    -- 10 Project Costing: expenditure items by expenditure item date
+    SELECT 10, ei.created_by
+    FROM   pjc_exp_items_all ei
+    JOIN   bu_scope b ON b.bu_id = ei.org_id
+    CROSS  JOIN win w
+    WHERE  ei.expenditure_item_date >= w.start_date
+    AND    ei.expenditure_item_date <  w.end_date_excl
+    UNION ALL
+    -- 11 Manufacturing (work execution): work orders created in the window
+    SELECT 11, wo.created_by
+    FROM   wie_work_orders_b wo
+    JOIN   inv_org_scope ios ON ios.organization_id = wo.organization_id
+    CROSS  JOIN win w
+    WHERE  wo.creation_date >= w.start_date
+    AND    wo.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 12 Item Structures (BOM): structures created in the window.
+    --    EGP_STRUCTURES_B has no ORGANIZATION_ID; PK2_VALUE holds it (string).
+    SELECT 12, es.created_by
+    FROM   egp_structures_b es
+    JOIN   inv_org_scope ios ON TO_CHAR(ios.organization_id) = es.pk2_value
+    CROSS  JOIN win w
+    WHERE  es.creation_date >= w.start_date
+    AND    es.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 13 Shipping: deliveries created in the window
+    SELECT 13, wnd.created_by
+    FROM   wsh_new_deliveries wnd
+    JOIN   inv_org_scope ios ON ios.organization_id = wnd.organization_id
+    CROSS  JOIN win w
+    WHERE  wnd.creation_date >= w.start_date
+    AND    wnd.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 14 Expenses: expense reports created in the window (EBS parity:
+    --    creation date). Overlaps Payables - expense reports become AP invoices.
+    SELECT 14, er.created_by
+    FROM   exm_expense_reports er
+    JOIN   bu_scope b ON b.bu_id = er.org_id
+    CROSS  JOIN win w
+    WHERE  er.creation_date >= w.start_date
+    AND    er.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 15 Lease Accounting (Fusion counterpart of EBS Property Manager)
+    SELECT 15, fl.created_by
+    FROM   fla_leases_all fl
+    JOIN   bu_scope b ON b.bu_id = fl.org_id
+    CROSS  JOIN win w
+    WHERE  fl.creation_date >= w.start_date
+    AND    fl.creation_date <  w.end_date_excl
+    UNION ALL
+    -- 16 Intercompany: pod-wide on purpose; users not counted (see header)
+    SELECT 16, CAST(NULL AS VARCHAR2(64))
+    FROM   fun_trx_headers ft
+    CROSS  JOIN win w
+    WHERE  ft.creation_date >= w.start_date
+    AND    ft.creation_date <  w.end_date_excl
+),
+-- ---- END OF SHARED BLOCK -------------------------------------------------
+-- Every aggregate in its own CTE; the final grid only selects from them.
+c_users AS (
+    SELECT COUNT(*) AS n
+    FROM ( SELECT who
+           FROM   txn
+           WHERE  who IS NOT NULL
+           GROUP  BY who )
+),
+c_ledgers AS (
+    SELECT COUNT(*) AS n
+    FROM   led_scope
+),
+c_les AS (
+    SELECT COUNT(*) AS n
+    FROM ( SELECT v.legal_entity_id
+           FROM   gl_ledger_le_v v
+           JOIN   led_scope l ON l.ledger_id = v.ledger_id
+           WHERE  v.legal_entity_id IS NOT NULL
+           GROUP  BY v.legal_entity_id )
+),
+c_bus AS (
+    SELECT COUNT(*) AS n
+    FROM   bu_scope
+),
+c_modules AS (
+    SELECT COUNT(*) AS n
+    FROM ( SELECT seq
+           FROM   txn
+           GROUP  BY seq )
+),
+metrics AS (
+    SELECT 1 AS seq, 'Users who transacted' AS metric_name, c.n AS metric_count FROM c_users   c
+    UNION ALL
+    SELECT 2,        'Ledgers',                             c.n                 FROM c_ledgers c
+    UNION ALL
+    SELECT 3,        'Legal Entities',                      c.n                 FROM c_les     c
+    UNION ALL
+    SELECT 4,        'Business Units',                      c.n                 FROM c_bus     c
+    UNION ALL
+    SELECT 5,        'Active Modules',                      c.n                 FROM c_modules c
+)
+SELECT metric_name,
+       metric_count
+FROM   metrics
+ORDER  BY seq]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="Executive_Summary">
+               <element name="METRIC_NAME" value="METRIC_NAME" label="METRIC_NAME" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="METRIC_COUNT" value="METRIC_COUNT" label="METRIC_COUNT" dataType="xsd:double" breakOrder="" fieldOrder="2"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="Executive_Summary" left="280px" top="345px"/>
+         <layout name="DATA_DS" left="0px" top="343px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>

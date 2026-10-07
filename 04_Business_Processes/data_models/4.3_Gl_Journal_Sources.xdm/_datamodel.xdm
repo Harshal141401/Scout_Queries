@@ -1,0 +1,188 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" defaultDataSourceRef="Oracle BI EE">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="Gl_journal" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F4.3 WB  GL Journal Sources workbook - one row per (source, category)
+--  Workbook  : Fusion_Discovery_4_3_GL_Journal_Sources.xlsx
+--              (EBS: EBS_Discovery_4_3_GL_Journal_Sources.xlsx, 19 rows)
+--  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--              RUN V4_0 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Mirrors   : EBS agent gl_journal_sources extract (r2r_journal_sources)
+--
+--  COLUMNS  JE_SOURCE, MODULE, JE_CATEGORY, JOURNAL_COUNT, ACTIVE_DAYS,
+--           FIRST_JOURNAL, LAST_JOURNAL   (EBS order)
+--  GRAIN    source x category, so a source appears once per category it used.
+--  RECONCILES  F4.3 GL journals row: SUM(JOURNAL_COUNT) = Volume (summed over
+--              the ledgers in scope); distinct JE_SOURCE = Sources when one
+--              ledger is in scope. Population identical to F4.3 (posted,
+--              ledger in scope, CREATION_DATE in the window).
+--  MODULE  the subledger that owns the source, read live from XLA_SUBLEDGERS
+--          (JE_SOURCE_NAME -> APPLICATION_ID -> FND_APPLICATION_VL name), never a
+--          typed map. Blank for a GL-native source (Manual, Spreadsheet,
+--          AutoCopy, Allocation ...) - correct, they are not subledgers.
+--  ACTIVE_DAYS deduped by GROUP BY per (source, category, day) - no DISTINCT.
+--
+--  PARAMETERS  the five standard binds, all optional - same meaning as F1:
+--    :p_ledger_id / :p_bu_id narrow the scope; :p_from_date / :p_to_date
+--    ('YYYY-MM-DD') set the window, blank = the last 90 days up to today.
+--    Run every Section 4 query with the SAME values as F1, or the numbers
+--    stop being comparable (see 06_Run_Results/RUN_LOG.md).
+--  SCOPE (identical to F1, which is the EBS 1.1 / 4.x rule with BU for OU)
+--    ledger-scoped    GL (led_scope), FA (book -> SET_OF_BOOKS_ID)
+--    business units   requisitions, POs, AP, payments, orders, AR, receipts,
+--                     projects (bu_scope: active BUs whose primary ledger is
+--                     in scope, narrowed by :p_bu_id)
+--    inventory orgs   receipts, deliveries, items, costing (inv_org_scope)
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+--      so Section 4 measures the same population and window as Section 1.
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+per_source_day AS (
+    SELECT h.je_source,
+           h.je_category,
+           TRUNC(h.creation_date) AS jrnl_day,
+           COUNT(*)               AS day_cnt
+    FROM   gl_je_headers h
+    JOIN   led_scope l ON l.ledger_id = h.ledger_id
+    CROSS  JOIN win w
+    WHERE  h.status = 'P'
+    AND    h.creation_date >= w.start_date
+    AND    h.creation_date <  w.end_date_excl
+    GROUP  BY h.je_source, h.je_category, TRUNC(h.creation_date)
+),
+src_module AS (
+    SELECT xs.je_source_name, MAX(fa.application_name) AS module_name
+    FROM   xla_subledgers     xs
+    JOIN   fnd_application_vl fa ON fa.application_id = xs.application_id
+    GROUP  BY xs.je_source_name
+),
+src_cat AS (
+    SELECT s.je_source,
+           s.je_category,
+           SUM(s.day_cnt)   AS journal_count,
+           COUNT(*)         AS active_days,
+           MIN(s.jrnl_day)  AS first_day,
+           MAX(s.jrnl_day)  AS last_day
+    FROM   per_source_day s
+    GROUP  BY s.je_source, s.je_category
+)
+SELECT
+    sc.je_source                                              AS "JE_SOURCE",
+    m.module_name                                             AS "MODULE",
+    sc.je_category                                            AS "JE_CATEGORY",
+    sc.journal_count                                          AS "JOURNAL_COUNT",
+    sc.active_days                                            AS "ACTIVE_DAYS",
+    TO_CHAR(sc.first_day, 'YYYY-MM-DD')                       AS "FIRST_JOURNAL",
+    TO_CHAR(sc.last_day,  'YYYY-MM-DD')                       AS "LAST_JOURNAL"
+FROM        src_cat    sc
+LEFT JOIN   src_module m ON m.je_source_name = sc.je_source
+ORDER BY    sc.journal_count DESC, sc.je_source, sc.je_category
+]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="Gl_journal">
+               <element name="JE_SOURCE" value="JE_SOURCE" label="JE_SOURCE" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="MODULE" value="MODULE" label="MODULE" dataType="xsd:string" breakOrder="" fieldOrder="2"/>
+               <element name="JE_CATEGORY" value="JE_CATEGORY" label="JE_CATEGORY" dataType="xsd:string" breakOrder="" fieldOrder="3"/>
+               <element name="JOURNAL_COUNT" value="JOURNAL_COUNT" label="JOURNAL_COUNT" dataType="xsd:double" breakOrder="" fieldOrder="4"/>
+               <element name="ACTIVE_DAYS" value="ACTIVE_DAYS" label="ACTIVE_DAYS" dataType="xsd:double" breakOrder="" fieldOrder="5"/>
+               <element name="FIRST_JOURNAL" value="FIRST_JOURNAL" label="FIRST_JOURNAL" dataType="xsd:string" breakOrder="" fieldOrder="6"/>
+               <element name="LAST_JOURNAL" value="LAST_JOURNAL" label="LAST_JOURNAL" dataType="xsd:string" breakOrder="" fieldOrder="7"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="Gl_journal" left="280px" top="0px"/>
+         <layout name="DATA_DS" left="0px" top="34px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>

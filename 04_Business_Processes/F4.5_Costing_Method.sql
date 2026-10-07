@@ -1,0 +1,160 @@
+-- ============================================================================
+--  F4.5  Section 4.5 Costing method assessment
+--  Version   : 1.1 (2026-10-05). Not yet run on a pod. v1.1: the method codes in
+--              the CASE are wrapped in TO_CHAR so mixing them with the typed
+--              labels cannot raise ORA-12704 (R009 / R010). Logic unchanged.
+--              RUN V4_0 AND V4_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS agent _COSTING_METHOD_SQL (report 30-Sep-2026, Vision:
+--              Standard 26 / Average 8 / FIFO 3 / LIFO 1 / TOTAL 38 - EBS)
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+--      so Section 4 measures the same population and window as Section 1.
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- current cost organization of each inventory org in scope
+org_cost_org AS (
+    SELECT  ios.organization_id,
+            MIN(ci.cost_org_id) AS cost_org_id
+    FROM        inv_org_scope     ios
+    LEFT JOIN   cst_cost_inv_orgs ci
+           ON   ci.inv_org_id = ios.organization_id
+          AND   TRUNC(SYSDATE) BETWEEN NVL(TRUNC(ci.from_date), TRUNC(SYSDATE))
+                                   AND NVL(TRUNC(ci.to_date),   TRUNC(SYSDATE))
+    GROUP   BY ios.organization_id
+),
+-- the primary-ledger cost book of each cost organization, still active
+primary_book AS (
+    SELECT  cob.cost_org_id, MIN(cob.cost_book_id) AS cost_book_id
+    FROM    cst_cost_org_books cob
+    WHERE   cob.primary_book_flag = 'Y'
+    AND     NVL(cob.inactive_date, SYSDATE + 1) > SYSDATE
+    GROUP   BY cob.cost_org_id
+),
+-- org-level default profile (no item category)
+org_default AS (
+    SELECT  dcp.cost_org_id, dcp.cost_book_id,
+            MIN(dcp.asset_cost_profile_id) AS profile_id
+    FROM    cst_default_cost_profiles dcp
+    WHERE   dcp.category_id IS NULL
+    GROUP   BY dcp.cost_org_id, dcp.cost_book_id
+),
+-- category-level profiles: the distinct methods per cost org + book
+cat_methods AS (
+    SELECT  dcp.cost_org_id, dcp.cost_book_id, cp.cost_method_code
+    FROM    cst_default_cost_profiles dcp
+    JOIN    cst_cost_profiles_b       cp ON cp.cost_profile_id = dcp.asset_cost_profile_id
+    WHERE   dcp.category_id IS NOT NULL
+    GROUP   BY dcp.cost_org_id, dcp.cost_book_id, cp.cost_method_code
+),
+cat_method_cnt AS (
+    SELECT  cost_org_id, cost_book_id,
+            COUNT(*)              AS n_methods,
+            MIN(cost_method_code) AS only_method
+    FROM    cat_methods
+    GROUP   BY cost_org_id, cost_book_id
+),
+org_method AS (
+    SELECT  o.organization_id,
+            CASE WHEN o.cost_org_id      IS NULL THEN 'No cost organization'
+                 WHEN pb.cost_book_id    IS NULL THEN 'No primary cost book'
+                 WHEN cp.cost_method_code IS NOT NULL THEN TO_CHAR(cp.cost_method_code)
+                 WHEN cm.n_methods = 1            THEN TO_CHAR(cm.only_method)
+                 WHEN cm.n_methods > 1            THEN 'Mixed (by item category)'
+                 ELSE 'No default cost profile'
+            END AS method_name
+    FROM        org_cost_org        o
+    LEFT JOIN   primary_book        pb ON pb.cost_org_id  = o.cost_org_id
+    LEFT JOIN   org_default         od ON od.cost_org_id  = o.cost_org_id
+                                      AND od.cost_book_id = pb.cost_book_id
+    LEFT JOIN   cst_cost_profiles_b cp ON cp.cost_profile_id = od.profile_id
+    LEFT JOIN   cat_method_cnt      cm ON cm.cost_org_id  = o.cost_org_id
+                                      AND cm.cost_book_id = pb.cost_book_id
+),
+method_counts AS (
+    SELECT method_name, COUNT(*) AS org_count
+    FROM   org_method
+    GROUP  BY method_name
+),
+scope_total AS (
+    SELECT NVL(SUM(org_count), 0) AS total_orgs FROM method_counts
+),
+ledger_names AS (
+    SELECT gl.ledger_id, MAX(gl.name) AS ledger_name
+    FROM   gl_ledgers gl
+    GROUP  BY gl.ledger_id
+),
+scope_label AS (
+    SELECT CASE WHEN p.p_ledger_id IS NULL THEN 'Whole instance (all ledgers)'
+                ELSE NVL(ln.ledger_name, 'Ledger ' || p.p_ledger_id || ' (not found)')
+           END AS scope_name
+    FROM        params       p
+    LEFT JOIN   ledger_names ln ON ln.ledger_id = TO_NUMBER(p.p_ledger_id)
+),
+grid AS (
+    SELECT 1 AS ord, mc.method_name AS method_name, mc.org_count AS org_count,
+           sl.scope_name AS scope_name, mc.org_count AS sort_count
+    FROM        method_counts mc
+    CROSS JOIN  scope_label   sl
+    UNION ALL
+    SELECT 2, 'TOTAL - inventory orgs in scope', st.total_orgs, sl.scope_name, -1
+    FROM        scope_total st
+    CROSS JOIN  scope_label sl
+)
+SELECT
+    g.method_name                                             AS "Costing Method",
+    g.org_count                                               AS "Inventory Orgs",
+    g.scope_name                                              AS "Scope"
+FROM        grid g
+ORDER BY    g.ord, g.sort_count DESC, g.method_name

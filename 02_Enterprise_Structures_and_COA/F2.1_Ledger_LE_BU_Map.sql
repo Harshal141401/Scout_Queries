@@ -1,0 +1,210 @@
+-- ============================================================================
+--  F2.1  Section 2.1 Ledger / legal entity / business unit map
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS 2.1_Ledger_LE_OU_Map_v2.sql (report 30-Sep-2026:
+--              Primary 6 LEs / 4 OUs / 38 inv orgs; Secondary 6 / NA / NA)
+--  Replaces  : Fusion draft ledger_entities.sql, which (a) joined through
+--              XLE_LE_OU_LEDGER_V - on EBS that view is an LE x OU CROSS
+--              PRODUCT (the 234-row bug), (b) had no ledger type, calendar,
+--              calendar type or accounting method, (c) returned one row per
+--              BU instead of one row per ledger, and (d) required the bind.
+--
+--  PARAMETERS  :p_ledger_id optional (blank = every ledger). Bound to a
+--              primary, it returns the primary AND its secondary/reporting
+--              ledgers (EBS parity). :p_bu_id, :p_custom_prefix, :p_from_date,
+--              :p_to_date accepted, not used (setup - no window applies).
+--
+--  OUTPUT  one row per ledger
+--    Ledger | Ledger Type | Currency | Calendar | Calendar Type | COA |
+--    Accounting Method | Legal Entities | Business Units | Inv Orgs
+--    Business Units and Inv Orgs read 'NA' on a secondary / reporting ledger:
+--    they attach to the primary, so a secondary has none of its own (EBS
+--    Appendix A 2.1). A 0 on a primary is a real measured zero.
+--
+--  SOURCES (verified against Oracle Fusion Tables and Views, 2026-09-30)
+--    GL_LEDGERS                 LEDGER_CATEGORY_CODE PRIMARY/SECONDARY/ALC,
+--                               OBJECT_TYPE_CODE L = ledger (excludes sets)
+--    GL_LEDGER_RELATIONSHIPS    PRIMARY_LEDGER_ID -> TARGET_LEDGER_ID
+--    GL_LEDGER_LE_V             ledger x LE x registration location -> grouped
+--    FUN_ALL_BUSINESS_UNITS_V   PRIMARY_LEDGER_ID is a STRING (ORG_INFORMATION3)
+--    INV_ORGANIZATION_DEFINITIONS_V  SET_OF_BOOKS_ID = org's BU primary ledger
+--    FND_ID_FLEX_STRUCTURES_VL  COA structure instance name (ID_FLEX_NUM =
+--                               GL_LEDGERS.CHART_OF_ACCOUNTS_ID)
+--    XLA_ACCTG_METHODS_TL       accounting method name
+--    GL_PERIODS                 calendar shape -> Calendar Type
+--
+--  Version   : 1.0 (built 2026-09-30, statically checked, not yet run on a pod)
+--  RUN V0_1 AND V0_2 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+-- ============================================================================
+WITH
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+led AS (
+    SELECT  gl.ledger_id,
+            gl.name,
+            gl.ledger_category_code,
+            gl.currency_code,
+            gl.period_set_name,
+            gl.accounted_period_type,
+            gl.chart_of_accounts_id,
+            gl.sla_accounting_method_code,
+            gl.sla_accounting_method_type
+    FROM    gl_ledgers gl
+    WHERE   gl.object_type_code = 'L'
+    AND     NVL(gl.complete_flag, 'Y') = 'Y'
+),
+acct_method AS (
+    SELECT  amt.accounting_method_type_code,
+            amt.accounting_method_code,
+            MAX(amt.name) AS method_name
+    FROM    xla_acctg_methods_tl amt
+    WHERE   amt.language = USERENV('LANG')
+    GROUP   BY amt.accounting_method_type_code,
+               amt.accounting_method_code
+),
+led_parent AS (
+    SELECT  r.target_ledger_id       AS ledger_id,
+            MIN(r.primary_ledger_id) AS primary_ledger_id
+    FROM    gl_ledger_relationships r
+    WHERE   r.application_id = 101
+    GROUP   BY r.target_ledger_id
+),
+-- ---- calendar shape (ported unchanged from EBS 2.1 v2) -------------------
+cal_periods AS (
+    SELECT  p.period_set_name,
+            p.period_type,
+            p.period_year,
+            (p.end_date - p.start_date) + 1 AS day_len
+    FROM    gl_periods p
+    WHERE   NVL(p.adjustment_period_flag, 'N') = 'N'
+    AND     EXISTS ( SELECT 1 FROM led l
+                     WHERE  l.period_set_name       = p.period_set_name
+                     AND    l.accounted_period_type = p.period_type )
+),
+cal_per_year AS (
+    SELECT  period_set_name, period_type,
+            MAX(n) AS periods_per_year
+    FROM  ( SELECT period_set_name, period_type, period_year, COUNT(*) AS n
+            FROM   cal_periods
+            GROUP  BY period_set_name, period_type, period_year )
+    GROUP   BY period_set_name, period_type
+),
+cal_shape AS (
+    SELECT  cp.period_set_name,
+            cp.period_type,
+            COUNT(*)                                                      AS period_rows,
+            MAX(cp.day_len)                                               AS max_days,
+            SUM(CASE WHEN cp.day_len IN (28, 35)       THEN 1 ELSE 0 END) AS weekly_len,
+            SUM(CASE WHEN cp.day_len BETWEEN 28 AND 31 THEN 1 ELSE 0 END) AS month_len,
+            SUM(CASE WHEN cp.day_len BETWEEN  6 AND  8 THEN 1 ELSE 0 END) AS week_len,
+            MAX(py.periods_per_year)                                      AS periods_per_year
+    FROM        cal_periods  cp
+    JOIN        cal_per_year py
+           ON   py.period_set_name = cp.period_set_name
+          AND   py.period_type     = cp.period_type
+    GROUP   BY cp.period_set_name, cp.period_type
+),
+-- ---- counts per ledger ----------------------------------------------------
+le_cnt AS (
+    SELECT  ledger_id, COUNT(*) AS n
+    FROM  ( SELECT v.ledger_id, v.legal_entity_id
+            FROM   gl_ledger_le_v v
+            WHERE  v.legal_entity_id IS NOT NULL
+            GROUP  BY v.ledger_id, v.legal_entity_id )
+    GROUP   BY ledger_id
+),
+bu_cnt AS (
+    SELECT  primary_ledger_id, COUNT(*) AS n
+    FROM  ( SELECT bu.primary_ledger_id, bu.bu_id
+            FROM   fun_all_business_units_v bu
+            WHERE  bu.primary_ledger_id IS NOT NULL
+            AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+            GROUP  BY bu.primary_ledger_id, bu.bu_id )
+    GROUP   BY primary_ledger_id
+),
+io_cnt AS (
+    SELECT  set_of_books_id, COUNT(*) AS n
+    FROM  ( SELECT iod.set_of_books_id, iod.organization_id
+            FROM   inv_organization_definitions_v iod
+            WHERE  iod.set_of_books_id IS NOT NULL
+            GROUP  BY iod.set_of_books_id, iod.organization_id )
+    GROUP   BY set_of_books_id
+),
+base AS (
+    SELECT  l.*,
+            NVL(pr.primary_ledger_id, l.ledger_id)              AS grp_ledger_id,
+            CASE l.ledger_category_code
+                 WHEN 'PRIMARY'   THEN 1
+                 WHEN 'SECONDARY' THEN 2
+                 WHEN 'ALC'       THEN 3
+                 ELSE 4
+            END                                                 AS type_rank,
+            NVL(lc.n, 0)                                        AS les,
+            NVL(bc.n, 0)                                        AS bus,
+            NVL(ic.n, 0)                                        AS ios
+    FROM        led        l
+    LEFT JOIN   led_parent pr ON pr.ledger_id         = l.ledger_id
+    LEFT JOIN   le_cnt     lc ON lc.ledger_id         = l.ledger_id
+    LEFT JOIN   bu_cnt     bc ON bc.primary_ledger_id = TO_CHAR(l.ledger_id)
+    LEFT JOIN   io_cnt     ic ON ic.set_of_books_id   = l.ledger_id
+),
+ranked AS (
+    SELECT  b.*,
+            MAX(b.les) OVER (PARTITION BY b.grp_ledger_id)            AS grp_les,
+            MAX(CASE WHEN b.ledger_id = b.grp_ledger_id THEN b.name END)
+                OVER (PARTITION BY b.grp_ledger_id)                   AS grp_name
+    FROM    base b
+)
+SELECT
+    r.name                                                    AS "Ledger",
+    CASE r.ledger_category_code
+         WHEN 'PRIMARY'   THEN 'Primary'
+         WHEN 'SECONDARY' THEN 'Secondary'
+         WHEN 'ALC'       THEN 'Reporting'
+         ELSE r.ledger_category_code
+    END                                                       AS "Ledger Type",
+    r.currency_code                                           AS "Currency",
+    r.period_set_name                                         AS "Calendar",
+    NVL( ( SELECT CASE
+                    WHEN cs.week_len   >= 0.9 * cs.period_rows THEN 'Weekly'
+                    WHEN cs.weekly_len >= 0.9 * cs.period_rows
+                         AND cs.max_days = 28                THEN '4-week / 13-period'
+                    WHEN cs.weekly_len >= 0.9 * cs.period_rows THEN '4-4-5 / 4-5-4'
+                    WHEN cs.month_len  >= 0.9 * cs.period_rows THEN 'Calendar month'
+                    ELSE 'Mixed'
+                  END || ' (' || cs.periods_per_year || ')'
+           FROM   cal_shape cs
+           WHERE  cs.period_set_name = r.period_set_name
+           AND    cs.period_type     = r.accounted_period_type ),
+         '-' )                                                AS "Calendar Type",
+    ( SELECT MAX(fs.id_flex_structure_name)
+      FROM   fnd_id_flex_structures_vl fs
+      WHERE  fs.application_id = 101
+      AND    fs.id_flex_code   = 'GL#'
+      AND    fs.id_flex_num    = r.chart_of_accounts_id )     AS "COA",
+    NVL( am.method_name,
+         NVL(r.sla_accounting_method_code, '-') )             AS "Accounting Method",
+    r.les                                                     AS "Legal Entities",
+    CASE WHEN r.ledger_category_code = 'PRIMARY'
+         THEN TO_CHAR(r.bus) ELSE 'NA' END                    AS "Business Units",
+    CASE WHEN r.ledger_category_code = 'PRIMARY'
+         THEN TO_CHAR(r.ios) ELSE 'NA' END                    AS "Inv Orgs"
+FROM         ranked      r
+CROSS JOIN   params      p
+LEFT JOIN    acct_method am
+        ON   am.accounting_method_code      = r.sla_accounting_method_code
+       AND   am.accounting_method_type_code = r.sla_accounting_method_type
+WHERE   ( p.p_ledger_id IS NULL
+          OR r.grp_ledger_id = TO_NUMBER(p.p_ledger_id)
+          OR r.ledger_id     = TO_NUMBER(p.p_ledger_id) )
+ORDER BY
+    r.grp_les DESC,
+    NVL(r.grp_name, r.name),
+    r.type_rank,
+    r.name

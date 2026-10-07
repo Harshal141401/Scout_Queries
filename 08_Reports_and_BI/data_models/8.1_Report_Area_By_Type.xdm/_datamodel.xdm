@@ -1,0 +1,577 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="Report_Inventory_By_Type" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F8.1  Section 8.1 Report area by type (Fusion): BI Publisher by product
+--        area, OTBI, financial reports, account groups
+--  Version   : 1.2 (2026-10-06). PRESENTATION ONLY: column headings now follow the
+--              EBS 8.1 query ("Report Type", "Module / Area", "Defined",
+--              "Custom", "Run in Last 6 Months"): plain words, no brackets.
+--              BIP turned v1.1's brackets into '__' (R036, user). Logic, rows
+--              and the Section 8 block are unchanged.
+--              v1.1 (2026-10-06) ran as R036 (partial screenshot).
+--              v1.0 (2026-10-05) was never run: on hold after R032 / R033
+--              (FR reports missed; its "Used" read LAST_ACCESSED_DATE, which
+--              equals LAST_MODIFIED_DATE on every item). Frozen in
+--              query_snapshots.
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Window    : OPERATIONAL, from the run day: 6 months (logwin), 3 months for the
+--              workbook (win3). The discovery-window dates are accepted and
+--              ignored. ESS keeps only recent history (R035: from 2026-09-21 on
+--              this pod), so ESS counts cover only the retained part.
+--  Reads     : GL_FRC_REPORTS_B, GL_FRC_REPORTS_TL, GL_FRC_USER_ACCESS_REPORTS,
+--              ESS_REQUEST_HISTORY (readable although the data dictionary shows
+--              no column: R034 / R035) and the shared-block tables.
+--  Run order : V8_1 v1.1 first (it prints every value these rules produce).
+--              Log every run in 06_Run_Results/RUN_LOG.md.
+--  Mirrors   : EBS agent ebs_discover_reports_bi / _report_area_sql (tools.py
+--              5644 / 5449; report 30-Sep-2026, Vision: XML Publisher 2,244 /
+--              0 / 9 in 80 modules; FSG 63 reports ... - EBS numbers, not targets)
+--  Scope     : the BI catalog is pod-wide (as EBS XML Publisher); account
+--              groups follow the bound ledger (led_scope).
+--  v1.1 CHANGES (Section 8 block v1.1, after R032-R035 and the user's
+--  decisions of 2026-10-06):
+--    - Financial reports: '/Shared Folders/' read as '/shared/' (C59).
+--    - Dashboards counted as DASHBOARDS (a page's parent folder, or the row in
+--      a '_portal' folder), pages shown alongside (C67; user: "the most ideal
+--      way for the migration document").
+--    - A '/' inside a name ('\/') no longer splits a path; names come from
+--      GL_FRC_REPORTS_TL (no '.xdo', no "page 1").
+--    - Product areas, decision B: Oracle family / product folders; a custom
+--      report filed in an Oracle folder stays in that area, every other custom
+--      report shows under its top-level client folder ("Custom: <folder>").
+--    - Use, decision "two labelled columns": Ran (ESS history) = runs of the
+--      report's job definition in the retained ESS history; Opened in FRC (6
+--      mth) = users whose last Financial Reporting Center open falls in the 6
+--      months. Online runs from the BI catalog are recorded nowhere readable,
+--      so both are floors. Fusion keeps no 6-month run log (R033 / R035).
+--
+--  OUTPUT  Report Type | Product Area | Defined | Custom | Run in Last 6 Months |
+--          Opened in Last 6 Months
+--    BI Publisher: one row per product area (Oracle areas first, then the
+--      client folders, largest first) + "Total - All Product Areas".
+--      Ran = reports whose job definition ran in the retained ESS history.
+--    OTBI: analyses; dashboards (with their page count). Ran is blank: OTBI is
+--      not run through ESS.
+--    Financial Reporting: financial reports (Custom = under the Custom folder,
+--      user decision 2026-10-06); account groups (ledger-scoped).
+--    Blank = not measured / not applicable, never zero. Defined, Custom, Ran
+--    and Opened count reports (dashboards), never runs.
+--  EBS rows with no Fusion counterpart (FSG report sets, row / column /
+--  content / display sets, unused axis sets) are not printed: Fusion has no
+--  FSG (R031: no RG_REPORT* object). The report states this.
+--  Expected on this pod (R032-R035): BI Publisher 1,570 / 196 / 8 / 1;
+--  analyses 2,457 / 35 / - / 1; dashboards 932 / 57 / - / 0 (1,423 pages);
+--  financial reports 6 / 6 / - / 4; account groups 21.
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+--      Section 8 reads only led_scope (F8.1 account groups); the rest is kept
+--      for parity with every other query. The discovery window (win) is NOT
+--      used: Section 8 measures operational time (logwin / win3 below).
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- ---- SECTION 8 BLOCK v1.1 (2026-10-06): catalog objects + recorded use -----
+--      Byte-identical in F8.1, F8.2a, F8.2b, F8.2c, F8.2_WB1, F8.2_WB2 and V8_1,
+--      so every Section 8 number comes from one population. Change all seven
+--      or none. v1.0 (catalog only) is frozen in 06_Run_Results/query_snapshots.
+-- logwin / win3: operational windows measured from the run day (the EBS
+-- agent's _logwin_cte and its 3-month workbook window), not the discovery
+-- window.
+logwin AS (
+    SELECT ADD_MONTHS(TRUNC(SYSDATE), -6) AS start_date,
+           TRUNC(SYSDATE) + 1             AS end_date_excl
+    FROM   dual
+),
+win3 AS (
+    SELECT ADD_MONTHS(TRUNC(SYSDATE), -3) AS start_date,
+           SYSDATE                        AS end_date
+    FROM   dual
+),
+-- s8_items: one row per item of the four report types in the SHARED BI
+-- catalog (GL_FRC_REPORTS_B). Financial Reporting stores its paths as
+-- '/Shared Folders/...' (R032): they are read as '/shared/...'. Grain = type +
+-- path (R032 B0: no duplicate). Personal folders and the '... dummy'
+-- placeholder rows are left out; account groups are counted from
+-- GL_ACCOUNT_GROUPS in F8.1. LAST_ACCESSED_DATE is NOT read: it equals
+-- LAST_MODIFIED_DATE on every item (R033), so it records edits, not use.
+s8_items AS (
+    SELECT UPPER(r.report_type_code)                                       AS type_code,
+           TO_CHAR(REGEXP_REPLACE(r.report_path, '^/shared folders/', '/shared/',
+                                  1, 1, 'i'))                              AS norm_path,
+           MIN(r.report_id)                                                AS report_id,
+           MAX(r.last_modified_date)                                       AS last_modified,
+           MAX(TO_CHAR(r.author_display_name))                             AS author,
+           MAX(TO_CHAR(r.bip_report_job_definition))                       AS job_def
+    FROM   gl_frc_reports_b r
+    WHERE  (   LOWER(r.report_path) LIKE '/shared/%'
+            OR LOWER(r.report_path) LIKE '/shared folders/%' )
+    AND    UPPER(r.report_type_code) IN ('BIP', 'ANALYSIS', 'DASHBOARD', 'FR')
+    GROUP  BY UPPER(r.report_type_code),
+              TO_CHAR(REGEXP_REPLACE(r.report_path, '^/shared folders/', '/shared/',
+                                     1, 1, 'i'))
+),
+-- s8_path: the custom flag (the Section 5 marker: under /shared/Custom/,
+-- compared lower-cased) and the path with every '/' inside a name (stored as
+-- '\/', R033) replaced by CHR(31) while the path is split.
+s8_path AS (
+    SELECT i.type_code, i.norm_path, i.report_id, i.last_modified, i.author, i.job_def,
+           CASE WHEN LOWER(i.norm_path) LIKE '/shared/custom/%'
+                THEN 'Y' ELSE 'N' END                                      AS is_custom,
+           REPLACE(i.norm_path, '\/', CHR(31))                             AS path_u
+    FROM   s8_items i
+),
+-- s8_obj_row: the object each index row belongs to. A Dashboard row is a PAGE
+-- (R033): its object is the dashboard, i.e. the parent folder, or the row
+-- itself when it sits directly in a '_portal' folder (R035: custom 57).
+s8_obj_row AS (
+    SELECT p.type_code, p.report_id, p.last_modified, p.author, p.job_def, p.is_custom,
+           CASE WHEN p.type_code = 'DASHBOARD'
+                 AND LOWER(NVL(REGEXP_SUBSTR(REGEXP_REPLACE(p.path_u, '/[^/]*$', ''),
+                                             '[^/]+$'), '-')) <> '_portal'
+                THEN REGEXP_REPLACE(p.path_u, '/[^/]*$', '')
+                ELSE p.path_u
+           END                                                             AS obj_u
+    FROM   s8_path p
+),
+-- s8_obj: one row per report, analysis, financial report or dashboard
+-- (n_rows = the dashboard's pages; 1 for every other type)
+s8_obj AS (
+    SELECT o.type_code, o.obj_u,
+           MAX(o.is_custom)                                                AS is_custom,
+           COUNT(*)                                                        AS n_rows,
+           MIN(o.report_id)                                                AS report_id,
+           MAX(o.last_modified)                                            AS last_modified,
+           MAX(o.author)                                                   AS author,
+           MAX(o.job_def)                                                  AS job_def
+    FROM   s8_obj_row o
+    GROUP  BY o.type_code, o.obj_u
+),
+-- s8_name: the display name of each catalog item (GL_FRC_REPORTS_TL; R033:
+-- every item has one), session language first, else US
+s8_name AS (
+    SELECT t.report_id,
+           MAX(TO_CHAR(t.report_display_name)) KEEP (DENSE_RANK FIRST ORDER BY
+               CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)   AS disp
+    FROM   gl_frc_reports_tl t
+    WHERE  t.language IN (USERENV('LANG'), 'US')
+    GROUP  BY t.report_id
+),
+-- s8_fold / s8_lvl: the object's folder below /shared/ or /shared/Custom/,
+-- '_portal' dashboard folders skipped, split into level 1 / level 2
+s8_fold AS (
+    SELECT o.type_code, o.obj_u, o.is_custom, o.n_rows, o.report_id, o.last_modified,
+           o.author, o.job_def,
+           REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(o.obj_u, '/[^/]*$', '') || '/',
+                                         '/_portal/', '/', 1, 0, 'i'),
+                          '^/shared/(custom/)?', '', 1, 1, 'i')            AS rel_u
+    FROM   s8_obj o
+),
+s8_lvl AS (
+    SELECT f.type_code, f.obj_u, f.is_custom, f.n_rows, f.report_id, f.last_modified,
+           f.author, f.job_def,
+           TO_CHAR(REPLACE(REGEXP_SUBSTR(f.rel_u, '[^/]+', 1, 1), CHR(31), '/')) AS lvl1,
+           TO_CHAR(REPLACE(REGEXP_SUBSTR(f.rel_u, '[^/]+', 1, 2), CHR(31), '/')) AS lvl2
+    FROM   s8_fold f
+),
+-- s8_okey: the product areas Oracle content defines (the catalog's family /
+-- product folders), so no module name is typed in this SQL
+s8_okey AS (
+    SELECT LOWER(l.lvl1) || '/' || LOWER(NVL(l.lvl2, '-'))                AS area_key,
+           MAX(l.lvl1 || CASE WHEN l.lvl2 IS NOT NULL THEN ' / ' || l.lvl2 END)
+                                                                           AS area_label
+    FROM   s8_lvl l
+    WHERE  l.is_custom = 'N'
+    AND    l.lvl1 IS NOT NULL
+    GROUP  BY LOWER(l.lvl1) || '/' || LOWER(NVL(l.lvl2, '-'))
+),
+-- s8_area: product area (user decision B, 2026-10-06). Oracle content -> its
+-- family / product area. Custom content -> the same Oracle area when it is
+-- filed in an Oracle family / product folder below /shared/Custom/, else one
+-- area per top-level client folder ("Custom: <folder>"). Report name = the
+-- display name; a dashboard is named after its folder.
+s8_area AS (
+    SELECT l.type_code, l.obj_u, l.is_custom, l.n_rows, l.report_id, l.last_modified,
+           l.author, l.job_def,
+           TO_CHAR(CASE WHEN l.lvl1 IS NULL
+                        THEN CASE l.is_custom WHEN 'Y' THEN 'custom:(top)' ELSE 'oracle:(top)' END
+                        WHEN l.is_custom = 'N' OR k.area_key IS NOT NULL
+                        THEN LOWER(l.lvl1) || '/' || LOWER(NVL(l.lvl2, '-'))
+                        ELSE 'custom:' || LOWER(l.lvl1)
+                   END)                                                    AS area_key,
+           TO_CHAR(CASE WHEN l.lvl1 IS NULL
+                        THEN CASE l.is_custom WHEN 'Y' THEN 'Custom: (top of /shared/Custom)'
+                                              ELSE '(top of /shared)' END
+                        WHEN l.is_custom = 'N'
+                        THEN l.lvl1 || CASE WHEN l.lvl2 IS NOT NULL THEN ' / ' || l.lvl2 END
+                        WHEN k.area_key IS NOT NULL THEN k.area_label
+                        ELSE 'Custom: ' || l.lvl1
+                   END)                                                    AS area_label,
+           CAST(CASE l.type_code WHEN 'BIP'       THEN 'BI Publisher report'
+                                 WHEN 'ANALYSIS'  THEN 'OTBI analysis'
+                                 WHEN 'DASHBOARD' THEN 'OTBI dashboard'
+                                 WHEN 'FR'        THEN 'Financial report'
+                END AS VARCHAR2(100))                                      AS type_label,
+           TO_CHAR(CASE WHEN l.type_code = 'DASHBOARD'
+                        THEN REPLACE(REGEXP_SUBSTR(l.obj_u, '[^/]+$'), CHR(31), '/')
+                        ELSE NVL(n.disp, REPLACE(REGEXP_SUBSTR(l.obj_u, '[^/]+$'), CHR(31), '/'))
+                   END)                                                    AS report_name,
+           TO_CHAR(REPLACE(l.obj_u, CHR(31), '/'))                         AS report_path
+    FROM   s8_lvl l
+    LEFT   JOIN s8_okey k
+           ON  l.is_custom = 'Y'
+           AND k.area_key  = LOWER(l.lvl1) || '/' || LOWER(NVL(l.lvl2, '-'))
+    LEFT   JOIN s8_name n ON n.report_id = l.report_id
+),
+-- ---- recorded use. Fusion keeps no 6-month run log (R033 / R035). ----------
+-- ESS: a run = a request with PROCESSSTART (it started, whatever the outcome),
+-- as EBS counts ACTUAL_START_DATE; schedule parents never start (R035 B). ESS
+-- keeps a limited history (R035: from 2026-09-21 on this pod), so every ESS
+-- count covers only the retained part of a window; s8_ess_hist gives its start.
+s8_ess_run AS (
+    SELECT TO_CHAR(h.definition)                                           AS definition,
+           TO_CHAR(h.submitter)                                            AS submitter,
+           TO_CHAR(h.name)                                                 AS job_name,
+           TO_CHAR(REGEXP_SUBSTR(h.jobtype, '[^/]+$'))                     AS job_type,
+           TO_CHAR(h.product)                                              AS product,
+           h.processstart                                                  AS processstart
+    FROM   ess_request_history h
+    WHERE  h.processstart IS NOT NULL
+),
+s8_ess_hist AS (
+    SELECT COUNT(*) AS n_runs, MIN(r.processstart) AS hist_start
+    FROM   s8_ess_run r
+),
+s8_ess_sub AS (
+    SELECT r.definition, r.submitter,
+           MAX(r.job_name)                                                 AS job_name,
+           MAX(r.job_type)                                                 AS job_type,
+           MAX(r.product)                                                  AS product,
+           NVL(SUM(CASE WHEN r.processstart >= w.start_date
+                         AND r.processstart <  w.end_date_excl
+                        THEN 1 ELSE 0 END), 0)                             AS n_6m,
+           NVL(SUM(CASE WHEN r.processstart >= w3.start_date
+                         AND r.processstart <= w3.end_date
+                        THEN 1 ELSE 0 END), 0)                             AS n_3m,
+           MIN(CASE WHEN r.processstart >= w.start_date
+                     AND r.processstart <  w.end_date_excl
+                    THEN r.processstart END)                               AS first_6m,
+           MAX(CASE WHEN r.processstart >= w.start_date
+                     AND r.processstart <  w.end_date_excl
+                    THEN r.processstart END)                               AS last_6m,
+           MIN(CASE WHEN r.processstart >= w3.start_date
+                     AND r.processstart <= w3.end_date
+                    THEN r.processstart END)                               AS first_3m,
+           MAX(CASE WHEN r.processstart >= w3.start_date
+                     AND r.processstart <= w3.end_date
+                    THEN r.processstart END)                               AS last_3m
+    FROM   s8_ess_run r
+    CROSS  JOIN logwin w
+    CROSS  JOIN win3   w3
+    WHERE  r.definition IS NOT NULL
+    GROUP  BY r.definition, r.submitter
+),
+s8_ess_def AS (
+    SELECT s.definition,
+           MAX(s.job_name)                                                 AS job_name,
+           MAX(s.job_type)                                                 AS job_type,
+           MAX(s.product)                                                  AS product,
+           NVL(SUM(s.n_6m), 0)                                             AS runs_6m,
+           NVL(SUM(s.n_3m), 0)                                             AS runs_3m,
+           MIN(s.first_6m)                                                 AS first_6m,
+           MAX(s.last_6m)                                                  AS last_6m,
+           MIN(s.first_3m)                                                 AS first_3m,
+           MAX(s.last_3m)                                                  AS last_3m,
+           NVL(SUM(CASE WHEN s.n_6m > 0 THEN 1 ELSE 0 END), 0)             AS subs_6m,
+           NVL(SUM(CASE WHEN s.n_3m > 0 THEN 1 ELSE 0 END), 0)             AS subs_3m
+    FROM   s8_ess_sub s
+    GROUP  BY s.definition
+),
+-- FRC log (GL_FRC_USER_ACCESS_REPORTS): one row per user and report, with
+-- that user's LAST open from the Financial Reporting Center (R033). Opened in
+-- a window = a user whose last open falls in it.
+s8_frc AS (
+    SELECT o.type_code, o.obj_u,
+           TO_CHAR(u.user_name)                                            AS user_name,
+           MAX(u.last_accessed_date)                                       AS last_open
+    FROM   gl_frc_user_access_reports u
+    JOIN   s8_obj_row o ON o.report_id = u.report_id
+    WHERE  u.last_accessed_date IS NOT NULL
+    GROUP  BY o.type_code, o.obj_u, TO_CHAR(u.user_name)
+),
+s8_frc_obj AS (
+    SELECT f.type_code, f.obj_u,
+           NVL(SUM(CASE WHEN f.last_open >= w.start_date
+                         AND f.last_open <  w.end_date_excl
+                        THEN 1 ELSE 0 END), 0)                             AS users_6m,
+           NVL(SUM(CASE WHEN f.last_open >= w3.start_date
+                         AND f.last_open <= w3.end_date
+                        THEN 1 ELSE 0 END), 0)                             AS users_3m,
+           MAX(f.last_open)                                                AS last_open
+    FROM   s8_frc f
+    CROSS  JOIN logwin w
+    CROSS  JOIN win3   w3
+    GROUP  BY f.type_code, f.obj_u
+),
+-- s8_use: every object with its recorded use. A job definition can be shared
+-- by several catalog copies (R035: one custom case); its runs then show on
+-- each copy, and job_copies says so.
+s8_jobcopies AS (
+    SELECT a.job_def, COUNT(*) AS n_copies
+    FROM   s8_area a
+    WHERE  a.job_def IS NOT NULL
+    GROUP  BY a.job_def
+),
+s8_use AS (
+    SELECT a.type_code, a.obj_u, a.is_custom, a.n_rows, a.report_id, a.last_modified,
+           a.author, a.job_def, a.area_key, a.area_label, a.type_label, a.report_name,
+           a.report_path,
+           NVL(e.runs_6m, 0)                                               AS ess_runs_6m,
+           NVL(e.runs_3m, 0)                                               AS ess_runs_3m,
+           e.first_6m                                                      AS ess_first_6m,
+           e.last_6m                                                       AS ess_last_6m,
+           NVL(e.subs_6m, 0)                                               AS ess_subs_6m,
+           NVL(jc.n_copies, 0)                                             AS job_copies,
+           NVL(f.users_6m, 0)                                              AS frc_users_6m,
+           NVL(f.users_3m, 0)                                              AS frc_users_3m,
+           f.last_open                                                     AS frc_last_open
+    FROM   s8_area a
+    LEFT   JOIN s8_ess_def   e  ON e.definition = a.job_def
+    LEFT   JOIN s8_jobcopies jc ON jc.job_def   = a.job_def
+    LEFT   JOIN s8_frc_obj   f  ON f.type_code  = a.type_code
+                               AND f.obj_u      = a.obj_u
+),
+-- source guards: a source that returns no rows gives a blank, never a 0
+s8_src_idx AS (
+    SELECT COUNT(*) AS n FROM gl_frc_reports_b r
+),
+s8_src_frc AS (
+    SELECT COUNT(*) AS n FROM gl_frc_user_access_reports u
+),
+-- ---- END OF SECTION 8 BLOCK ---------------------------------------------------
+ag_src AS (
+    SELECT COUNT(*) AS n FROM gl_account_groups g
+),
+-- an account group is in scope when one of its accounts is on a ledger in
+-- scope (GL_ACCOUNT_GROUP_DETAILS.LEDGER_ID); R032: 21, all with details
+ag_cnt AS (
+    SELECT COUNT(*) AS n
+    FROM  ( SELECT d.account_group_id
+            FROM   gl_account_group_details d
+            JOIN   led_scope         l ON l.ledger_id        = d.ledger_id
+            JOIN   gl_account_groups g ON g.account_group_id = d.account_group_id
+            GROUP  BY d.account_group_id )
+),
+bip_area AS (
+    SELECT u.area_key,
+           MAX(u.area_label)                                           AS area_label,
+           COUNT(*)                                                    AS n_defined,
+           SUM(CASE WHEN u.is_custom = 'Y' THEN 1 ELSE 0 END)          AS n_custom,
+           SUM(CASE WHEN u.ess_runs_6m > 0 THEN 1 ELSE 0 END)          AS n_ran,
+           SUM(CASE WHEN u.frc_users_6m > 0 THEN 1 ELSE 0 END)         AS n_frc
+    FROM   s8_use u
+    WHERE  u.type_code = 'BIP'
+    GROUP  BY u.area_key
+),
+bip_tot AS (
+    SELECT NVL(SUM(b.n_defined), 0) AS n_defined,
+           NVL(SUM(b.n_custom),  0) AS n_custom,
+           NVL(SUM(b.n_ran),     0) AS n_ran,
+           NVL(SUM(b.n_frc),     0) AS n_frc
+    FROM   bip_area b
+),
+-- the two OTBI rows always print, even if a type has no item
+otbi_types AS (
+    SELECT CAST('ANALYSIS' AS VARCHAR2(30)) AS type_code, 1 AS seq FROM dual
+    UNION ALL
+    SELECT TO_CHAR('DASHBOARD'), 2 FROM dual
+),
+otbi_cnt AS (
+    SELECT u.type_code,
+           COUNT(*)                                                    AS n_defined,
+           SUM(CASE WHEN u.is_custom = 'Y' THEN 1 ELSE 0 END)          AS n_custom,
+           SUM(CASE WHEN u.frc_users_6m > 0 THEN 1 ELSE 0 END)         AS n_frc,
+           NVL(SUM(u.n_rows), 0)                                       AS n_pages
+    FROM   s8_use u
+    WHERE  u.type_code IN ('ANALYSIS', 'DASHBOARD')
+    GROUP  BY u.type_code
+),
+fr_cnt AS (
+    SELECT COUNT(*)                                                    AS n_defined,
+           NVL(SUM(CASE WHEN u.is_custom = 'Y' THEN 1 ELSE 0 END), 0)  AS n_custom,
+           NVL(SUM(CASE WHEN u.frc_users_6m > 0 THEN 1 ELSE 0 END), 0) AS n_frc
+    FROM   s8_use u
+    WHERE  u.type_code = 'FR'
+),
+rows_out AS (
+    SELECT 1                                                    AS sort_a,
+           CASE WHEN b.area_key LIKE 'custom:%' THEN 100000 - b.n_defined
+                ELSE -b.n_defined END                           AS sort_b,
+           CAST(b.area_key AS VARCHAR2(400))                    AS sort_c,
+           CAST('BI Publisher' AS VARCHAR2(400))                AS report_type,
+           CAST(b.area_label AS VARCHAR2(400))                  AS product_area,
+           b.n_defined                                          AS defined_cnt,
+           b.n_custom                                           AS custom_cnt,
+           CASE WHEN h.n_runs > 0 THEN b.n_ran END              AS ran_cnt,
+           CASE WHEN sf.n > 0 THEN b.n_frc END                  AS frc_cnt
+    FROM   bip_area b
+    CROSS  JOIN s8_ess_hist h
+    CROSS  JOIN s8_src_frc  sf
+    UNION ALL
+    SELECT 1, 999999, TO_CHAR(' '), TO_CHAR('BI Publisher'), TO_CHAR('Total - All Product Areas'),
+           CASE WHEN i.n > 0 THEN t.n_defined END,
+           CASE WHEN i.n > 0 THEN t.n_custom END,
+           CASE WHEN h.n_runs > 0 THEN t.n_ran END,
+           CASE WHEN sf.n > 0 THEN t.n_frc END
+    FROM   bip_tot t
+    CROSS  JOIN s8_src_idx  i
+    CROSS  JOIN s8_ess_hist h
+    CROSS  JOIN s8_src_frc  sf
+    UNION ALL
+    SELECT 2, ot.seq, TO_CHAR(' '), TO_CHAR('OTBI'),
+           TO_CHAR(CASE WHEN ot.type_code = 'DASHBOARD'
+                        THEN 'Dashboards (all product areas; ' || NVL(oc.n_pages, 0) || ' pages)'
+                        ELSE 'Analyses (all product areas)' END),
+           CASE WHEN i.n > 0 THEN NVL(oc.n_defined, 0) END,
+           CASE WHEN i.n > 0 THEN NVL(oc.n_custom, 0) END,
+           CAST(NULL AS NUMBER),
+           CASE WHEN sf.n > 0 THEN NVL(oc.n_frc, 0) END
+    FROM   otbi_types ot
+    LEFT   JOIN otbi_cnt oc ON oc.type_code = ot.type_code
+    CROSS  JOIN s8_src_idx i
+    CROSS  JOIN s8_src_frc sf
+    UNION ALL
+    SELECT 3, 1, TO_CHAR(' '), TO_CHAR('Financial Reporting'),
+           TO_CHAR('Financial reports (Financial Reporting Web Studio)'),
+           CASE WHEN i.n > 0 THEN f.n_defined END,
+           CASE WHEN i.n > 0 THEN f.n_custom END,
+           CAST(NULL AS NUMBER),
+           CASE WHEN sf.n > 0 THEN f.n_frc END
+    FROM   fr_cnt f
+    CROSS  JOIN s8_src_idx i
+    CROSS  JOIN s8_src_frc sf
+    UNION ALL
+    SELECT 3, 2, TO_CHAR(' '), TO_CHAR('Financial Reporting'),
+           TO_CHAR('Account groups (ledgers in scope)'),
+           CASE WHEN g.n > 0 THEN ac.n END,
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER),
+           CAST(NULL AS NUMBER)
+    FROM   ag_cnt ac
+    CROSS  JOIN ag_src g
+)
+SELECT
+    o.report_type                                             AS "Report Type",
+    o.product_area                                            AS "Product Area",
+    o.defined_cnt                                             AS "Defined",
+    o.custom_cnt                                              AS "Custom",
+    o.ran_cnt                                                 AS "Run in Last 6 Months",
+    o.frc_cnt                                                 AS "Opened in Last 6 Months"
+FROM        rows_out o
+ORDER BY    o.sort_a, o.sort_b, o.sort_c
+]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="Report_Inventory_By_Type">
+               <element name="Report_Type" value="Report Type" label="Report_Type" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="Product_Area" value="Product Area" label="Product_Area" dataType="xsd:string" breakOrder="" fieldOrder="2"/>
+               <element name="Defined" value="Defined" label="Defined" dataType="xsd:double" breakOrder="" fieldOrder="3"/>
+               <element name="Custom" value="Custom" label="Custom" dataType="xsd:double" breakOrder="" fieldOrder="4"/>
+               <element name="Run_in_Last_6_Months" value="Run in Last 6 Months" label="Run_in_Last_6_Months" dataType="xsd:double" breakOrder="" fieldOrder="5"/>
+               <element name="Opened_in_Last_6_Months" value="Opened in Last 6 Months" label="Opened_in_Last_6_Months" dataType="xsd:double" breakOrder="" fieldOrder="6"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="Report_Inventory_By_Type" left="280px" top="0px"/>
+         <layout name="DATA_DS" left="0px" top="267px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>

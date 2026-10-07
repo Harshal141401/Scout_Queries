@@ -1,0 +1,267 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" defaultDataSourceRef="Oracle BI EE">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="Security Footprint" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F9.1  Section 9.1 Security footprint
+--  Version   : 1.1 (2026-10-06). Not yet run on a pod.
+--              v1.1 (Section 9 block v1.1, after R038): Users counts LOGIN
+--              NAMES, not PER_USERS rows. R038 found one Oracle application
+--              identity held by two accounts that can both sign in, which
+--              v1.0 counted twice (115 -> 114). Roles unchanged.
+--              v1.0 (2026-10-06) was never run; frozen in query_snapshots.
+--              Checks: V9_1 v1.0 (R037) and v1.1 (R038); V9_1 v1.2 carries
+--              this block. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  Mirrors   : EBS agent ebs_discover_security (tools.py 5790). Reviewer,
+--              2026-09-10: "keep it simple. Just have number of users and
+--              responsibilities." (report 30-Sep-2026, Vision: Users 3,156 |
+--              Responsibilities 4,365 - EBS, not targets)
+--  Window    : SNAPSHOT (as of the run day). The dates are accepted and ignored.
+--  Scope     : pod-wide, as EBS is instance-wide: user accounts and roles are
+--              not owned by a ledger or business unit. The binds are accepted
+--              for BIP parity and do not change the result.
+--  Reads     : PER_USERS, PER_ROLES_DN (columns printed by R006 / R016) and the
+--              shared-block tables.
+--
+--  OUTPUT  Metric | Value      (2 rows, EBS order)
+--    1 Users   EBS: FND_USER rows whose start / end dates contain today
+--              (FND_USER.USER_NAME is unique, so that is a count of login
+--              names). Fusion: login names (PER_USERS.USERNAME, compared
+--              upper-cased) with at least one account that can sign in today -
+--              not deleted (ACTIVE_FLAG not 'N'), not suspended (SUSPENDED not
+--              'Y'), start / end dates contain today. Login names with no
+--              person count (Oracle application identities, service and
+--              integration accounts), as EBS counts its seeded users.
+--    2 Roles   EBS: Responsibilities, every FND_RESPONSIBILITY whose dates
+--              contain today. Fusion assigns roles, not responsibilities:
+--              every PER_ROLES_DN role not flagged inactive, Oracle (ORA_) and
+--              client roles alike, all role types.
+--    A source that returns no rows to the report user gives a blank, never 0.
+--
+--  NOT THE SAME AS: the executive summary's "Users who transacted" (people
+--  with transactions in the discovery window). Segregation-of-duties analysis
+--  is not part of this read-only inventory (EBS Appendix A, row 9.1).
+--  CHANGES AGAINST THE JUNE DRAFT (02_SQL_Existing 18_S9.1)
+--    * rows: Custom Roles and Data Access Sets dropped (not in EBS 9.1;
+--      custom roles are in Section 5); Responsibilities -> Roles.
+--    * users: was ACTIVE_FLAG = 'Y' only; now also not suspended and
+--      date-effective, the EBS rule, counted once per login name.
+--      COUNT(DISTINCT) replaced by GROUP BY.
+--    * roles: was every PER_ROLES_DN_VL row; now PER_ROLES_DN (pod-proven,
+--      one row per role) without inactive roles.
+--  Expected on this pod (R038): Users 114 = 57 people + 57 login names without
+--  a person (42 Oracle application identities, 15 service, integration and
+--  admin accounts); Roles 511 = 442 job + 57 abstract + 12 discretionary.
+-- ============================================================================
+WITH
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+--      Section 9 is pod-wide and reads none of it; it is kept for parity with
+--      every other query.
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- WINDOW: identical in F0 and F1 -------------------------------------
+win AS (
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    FROM   params p
+),
+-- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
+led_scope AS (
+    SELECT gl.ledger_id
+    FROM   gl_ledgers gl
+    CROSS  JOIN params p
+    WHERE  gl.object_type_code = 'L'
+    AND    NVL(gl.complete_flag, 'Y') = 'Y'
+    AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+),
+-- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
+-- so it is compared as a string. A BU whose classification STATUS is
+-- inactive ('I' / 'INACTIVE') is excluded - the Fusion counterpart of the EBS
+-- W3-Houston "disabled OU" rule. The view itself already drops BUs whose
+-- effective dates have ended. V0_2 block A prints the STATUS values present.
+bu_scope AS (
+    SELECT bu.bu_id
+    FROM   fun_all_business_units_v bu
+    CROSS  JOIN params p
+    WHERE  bu.primary_ledger_id IS NOT NULL
+    AND    NVL(UPPER(bu.status), 'A') NOT IN ('I', 'INACTIVE')
+    AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY bu.bu_id
+),
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY iod.organization_id
+),
+fa_book_scope AS (
+    SELECT fbc.book_type_code
+    FROM   fa_book_controls fbc
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    GROUP  BY fbc.book_type_code
+),
+-- ---- SECTION 9 BLOCK v1.1 (2026-10-06): user accounts and roles -------------
+--      Byte-identical in F9.1 and V9_1, so the check prints exactly what the
+--      report counts. Change both or none. Every column read here was printed
+--      on the pod by the column checks R006 (V3_1) and R016 (V5_0).
+-- s9_user: one row per PER_USERS row. EBS counts the FND_USER rows whose
+-- start / end dates contain today. The Fusion equivalent of an account that
+-- can sign in today:
+--   ACTIVE_FLAG not 'N'  (Oracle doc: 'N' only when the account was deleted
+--                         from the identity store)
+--   SUSPENDED   not 'Y'  (a suspended account shows as Inactive in the
+--                         Security Console and cannot sign in)
+--   START_DATE / END_DATE contain today (blank = open, as EBS reads END_DATE)
+-- Service and integration accounts (no PERSON_ID) count, as EBS counts
+-- SYSADMIN and its other non-person users. Flags are read through
+-- UPPER(TO_CHAR(..)) because the column check does not print their type.
+s9_user AS (
+    SELECT u.user_id,
+           TO_CHAR(u.username)                                             AS user_name,
+           NVL(UPPER(TO_CHAR(u.active_flag)), '-')                         AS active_flag,
+           NVL(UPPER(TO_CHAR(u.suspended)), '-')                           AS suspended,
+           NVL(UPPER(TO_CHAR(u.hr_terminated)), '-')                       AS hr_terminated,
+           CASE WHEN u.person_id IS NULL THEN 'N' ELSE 'Y' END             AS has_person,
+           CASE WHEN TRUNC(u.start_date) > TRUNC(SYSDATE) THEN 'future'
+                WHEN TRUNC(u.end_date)   < TRUNC(SYSDATE) THEN 'ended'
+                ELSE 'current'
+           END                                                             AS date_state,
+           CASE WHEN NVL(UPPER(TO_CHAR(u.active_flag)), 'Y') <> 'N'
+                 AND NVL(UPPER(TO_CHAR(u.suspended)), 'N')   <> 'Y'
+                 AND NVL(TRUNC(u.start_date), TRUNC(SYSDATE)) <= TRUNC(SYSDATE)
+                 AND NVL(TRUNC(u.end_date),   TRUNC(SYSDATE)) >= TRUNC(SYSDATE)
+                THEN 'Y' ELSE 'N'
+           END                                                             AS counted
+    FROM   per_users u
+),
+-- s9_user_key: one row per LOGIN NAME (block v1.1, after R038). USER_ID is
+-- unique, but 37 user names are held by 76 accounts (R037 / R038): 34 are an
+-- account re-created beside its deleted predecessor, and one Oracle
+-- application identity is held by two accounts that can both sign in, which
+-- v1.0 counted twice. A login name (USERNAME, compared upper-cased) counts
+-- once if any of its accounts can sign in. EBS FND_USER.USER_NAME is unique,
+-- so EBS's count is a count of login names too. A blank user name stays one
+-- key per account.
+s9_user_key AS (
+    SELECT NVL(UPPER(su.user_name), '#' || TO_CHAR(su.user_id))           AS login_key,
+           MAX(su.counted)                                                 AS counted
+    FROM   s9_user su
+    GROUP  BY NVL(UPPER(su.user_name), '#' || TO_CHAR(su.user_id))
+),
+s9_user_cnt AS (
+    SELECT COUNT(*)                                                        AS n_keys,
+           NVL(SUM(CASE WHEN k.counted = 'Y' THEN 1 ELSE 0 END), 0)        AS n_counted
+    FROM   s9_user_key k
+),
+-- s9_role: one row per PER_ROLES_DN row. EBS counts every responsibility whose
+-- dates contain today, seeded or custom. Fusion assigns roles instead of
+-- responsibilities; PER_ROLES_DN carries no start / end date, so a role counts
+-- unless ACTIVE_FLAG is 'N'. Every role type and both Oracle (ORA_) and client
+-- roles count, as EBS counts seeded and custom responsibilities alike. The type
+-- flags and the code class are carried for V9_1 only.
+s9_role AS (
+    SELECT r.role_id,
+           TO_CHAR(r.role_common_name)                                     AS role_code,
+           NVL(UPPER(TO_CHAR(r.active_flag)), '-')                         AS active_flag,
+           NVL(UPPER(TO_CHAR(r.job_role)), '-')                            AS job_flag,
+           NVL(UPPER(TO_CHAR(r.abstract_role)), '-')                       AS abstract_flag,
+           NVL(UPPER(TO_CHAR(r.duty_role)), '-')                           AS duty_flag,
+           NVL(UPPER(TO_CHAR(r.data_role)), '-')                           AS data_flag,
+           NVL(UPPER(TO_CHAR(r.external_role)), '-')                       AS external_flag,
+           CASE WHEN UPPER(TO_CHAR(r.role_common_name)) LIKE 'ORA\_%' ESCAPE '\'
+                THEN 'ORA_'
+                WHEN UPPER(TO_CHAR(r.role_common_name)) LIKE '%\_CUSTOM' ESCAPE '\'
+                THEN '_CUSTOM'
+                ELSE 'other'
+           END                                                             AS code_class,
+           CASE WHEN NVL(UPPER(TO_CHAR(r.active_flag)), 'Y') <> 'N'
+                THEN 'Y' ELSE 'N'
+           END                                                             AS counted
+    FROM   per_roles_dn r
+),
+s9_role_key AS (
+    SELECT sr.role_id, MAX(sr.counted) AS counted
+    FROM   s9_role sr
+    GROUP  BY sr.role_id
+),
+s9_role_cnt AS (
+    SELECT COUNT(*)                                                        AS n_keys,
+           NVL(SUM(CASE WHEN k.counted = 'Y' THEN 1 ELSE 0 END), 0)        AS n_counted
+    FROM   s9_role_key k
+),
+-- ---- END OF SECTION 9 BLOCK ---------------------------------------------------
+grid AS (
+    SELECT 1                                                        AS seq,
+           CAST('Users' AS VARCHAR2(100))                           AS metric,
+           CASE WHEN u.n_keys > 0 THEN u.n_counted END              AS metric_value
+    FROM   s9_user_cnt u
+    UNION ALL
+    SELECT 2, TO_CHAR('Roles'),
+           CASE WHEN r.n_keys > 0 THEN r.n_counted END
+    FROM   s9_role_cnt r
+)
+SELECT
+    g.metric                                                  AS "Metric",
+    g.metric_value                                            AS "Value"
+FROM        grid g
+ORDER BY    g.seq]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="Security Footprint">
+               <element name="Metric" value="Metric" label="Metric" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="Value" value="Value" label="Value" dataType="xsd:double" breakOrder="" fieldOrder="2"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="Security Footprint" left="280px" top="0px"/>
+         <layout name="DATA_DS" left="0px" top="267px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>

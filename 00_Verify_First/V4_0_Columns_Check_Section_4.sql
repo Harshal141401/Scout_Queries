@@ -1,0 +1,157 @@
+-- ============================================================================
+--  V4_0  QUICK CHECK - every table and column Section 4 reads (run FIRST)
+--  Version   : 1.2 (2026-10-05)        Run log: 06_Run_Results/RUN_LOG.md
+--  v1.2 adds PO_HEADERS_ALL.DOCUMENT_STATUS (F4.1 v1.3 now reads it: Fusion
+--       records PO cancellation there, R024). Already proven on this pod (R020 /
+--       R023 column lists).
+--  v1.1 adds national_charset_cols: any column the queries use whose type is
+--       NVARCHAR2 / NCHAR / NCLOB (the cause class of ORA-12704, R009 / R010).
+--       '-' means none.
+--  For: F4.1_P2P_Flow, F4.2_O2C_Flow, F4.3_R2R, F4.3_WB_GL_Journal_Sources,
+--       F4.4_Other_Process_Areas, F4.5_Costing_Method
+--
+--  The list below is GENERATED from the table.column references in those six
+--  files (alias -> table resolved per CTE), so it cannot miss a column the
+--  queries use. Metadata only (ALL_TAB_COLUMNS) - it cannot fail.
+--
+--  OUTPUT  ord | object_name | needed_columns | national_charset_cols | columns_present
+--    needed_columns = 'ALL OK', '*** MISSING: <cols> ***' or
+--                     '*** OBJECT NOT VISIBLE ***'
+--  Every row must say ALL OK. Paste / export the grid back.
+--  No binds. Pure SELECT. Nothing is written.
+-- ============================================================================
+WITH
+need AS (
+    SELECT  1 AS ord, 'AP_CHECKS_ALL' AS tab, 'CHECK_DATE' AS col FROM dual
+    UNION ALL SELECT  1, 'AP_CHECKS_ALL', 'ORG_ID' FROM dual
+    UNION ALL SELECT  1, 'AP_CHECKS_ALL', 'PAYMENT_METHOD_CODE' FROM dual
+    UNION ALL SELECT  1, 'AP_CHECKS_ALL', 'STATUS_LOOKUP_CODE' FROM dual
+    UNION ALL SELECT  2, 'AP_INVOICES_ALL', 'CANCELLED_DATE' FROM dual
+    UNION ALL SELECT  2, 'AP_INVOICES_ALL', 'INVOICE_DATE' FROM dual
+    UNION ALL SELECT  2, 'AP_INVOICES_ALL', 'INVOICE_TYPE_LOOKUP_CODE' FROM dual
+    UNION ALL SELECT  2, 'AP_INVOICES_ALL', 'ORG_ID' FROM dual
+    UNION ALL SELECT  3, 'AR_CASH_RECEIPTS_ALL', 'ORG_ID' FROM dual
+    UNION ALL SELECT  3, 'AR_CASH_RECEIPTS_ALL', 'RECEIPT_DATE' FROM dual
+    UNION ALL SELECT  4, 'CE_STATEMENT_HEADERS', 'CREATION_DATE' FROM dual
+    UNION ALL SELECT  5, 'CST_COST_INV_ORGS', 'COST_ORG_ID' FROM dual
+    UNION ALL SELECT  5, 'CST_COST_INV_ORGS', 'FROM_DATE' FROM dual
+    UNION ALL SELECT  5, 'CST_COST_INV_ORGS', 'INV_ORG_ID' FROM dual
+    UNION ALL SELECT  5, 'CST_COST_INV_ORGS', 'TO_DATE' FROM dual
+    UNION ALL SELECT  6, 'CST_COST_ORG_BOOKS', 'COST_BOOK_ID' FROM dual
+    UNION ALL SELECT  6, 'CST_COST_ORG_BOOKS', 'COST_ORG_ID' FROM dual
+    UNION ALL SELECT  6, 'CST_COST_ORG_BOOKS', 'INACTIVE_DATE' FROM dual
+    UNION ALL SELECT  6, 'CST_COST_ORG_BOOKS', 'PRIMARY_BOOK_FLAG' FROM dual
+    UNION ALL SELECT  7, 'CST_COST_PROFILES_B', 'COST_METHOD_CODE' FROM dual
+    UNION ALL SELECT  7, 'CST_COST_PROFILES_B', 'COST_PROFILE_ID' FROM dual
+    UNION ALL SELECT  8, 'CST_DEFAULT_COST_PROFILES', 'ASSET_COST_PROFILE_ID' FROM dual
+    UNION ALL SELECT  8, 'CST_DEFAULT_COST_PROFILES', 'CATEGORY_ID' FROM dual
+    UNION ALL SELECT  8, 'CST_DEFAULT_COST_PROFILES', 'COST_BOOK_ID' FROM dual
+    UNION ALL SELECT  8, 'CST_DEFAULT_COST_PROFILES', 'COST_ORG_ID' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'HEADER_ID' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'ORDERED_DATE' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'ORDER_NUMBER' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'ORG_ID' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'SOURCE_ORDER_SYSTEM' FROM dual
+    UNION ALL SELECT  9, 'DOO_HEADERS_ALL', 'SUBMITTED_FLAG' FROM dual
+    UNION ALL SELECT 10, 'DOO_LINES_ALL', 'CATEGORY_CODE' FROM dual
+    UNION ALL SELECT 10, 'DOO_LINES_ALL', 'HEADER_ID' FROM dual
+    UNION ALL SELECT 11, 'EGP_SYSTEM_ITEMS_B', 'ENABLED_FLAG' FROM dual
+    UNION ALL SELECT 11, 'EGP_SYSTEM_ITEMS_B', 'INVENTORY_ITEM_ID' FROM dual
+    UNION ALL SELECT 11, 'EGP_SYSTEM_ITEMS_B', 'ORGANIZATION_ID' FROM dual
+    UNION ALL SELECT 11, 'EGP_SYSTEM_ITEMS_B', 'TEMPLATE_ITEM_FLAG' FROM dual
+    UNION ALL SELECT 12, 'FA_BOOKS', 'ASSET_ID' FROM dual
+    UNION ALL SELECT 12, 'FA_BOOKS', 'BOOK_TYPE_CODE' FROM dual
+    UNION ALL SELECT 12, 'FA_BOOKS', 'TRANSACTION_HEADER_ID_OUT' FROM dual
+    UNION ALL SELECT 13, 'FA_BOOK_CONTROLS', 'BOOK_CLASS' FROM dual
+    UNION ALL SELECT 13, 'FA_BOOK_CONTROLS', 'BOOK_TYPE_CODE' FROM dual
+    UNION ALL SELECT 13, 'FA_BOOK_CONTROLS', 'DATE_INEFFECTIVE' FROM dual
+    UNION ALL SELECT 13, 'FA_BOOK_CONTROLS', 'SET_OF_BOOKS_ID' FROM dual
+    UNION ALL SELECT 14, 'FND_APPLICATION_VL', 'APPLICATION_ID' FROM dual
+    UNION ALL SELECT 14, 'FND_APPLICATION_VL', 'APPLICATION_NAME' FROM dual
+    UNION ALL SELECT 15, 'FND_LOOKUP_VALUES', 'LANGUAGE' FROM dual
+    UNION ALL SELECT 15, 'FND_LOOKUP_VALUES', 'LOOKUP_CODE' FROM dual
+    UNION ALL SELECT 15, 'FND_LOOKUP_VALUES', 'LOOKUP_TYPE' FROM dual
+    UNION ALL SELECT 15, 'FND_LOOKUP_VALUES', 'MEANING' FROM dual
+    UNION ALL SELECT 16, 'FUN_ALL_BUSINESS_UNITS_V', 'BU_ID' FROM dual
+    UNION ALL SELECT 16, 'FUN_ALL_BUSINESS_UNITS_V', 'PRIMARY_LEDGER_ID' FROM dual
+    UNION ALL SELECT 16, 'FUN_ALL_BUSINESS_UNITS_V', 'STATUS' FROM dual
+    UNION ALL SELECT 17, 'GL_JE_HEADERS', 'CREATION_DATE' FROM dual
+    UNION ALL SELECT 17, 'GL_JE_HEADERS', 'JE_CATEGORY' FROM dual
+    UNION ALL SELECT 17, 'GL_JE_HEADERS', 'JE_SOURCE' FROM dual
+    UNION ALL SELECT 17, 'GL_JE_HEADERS', 'LEDGER_ID' FROM dual
+    UNION ALL SELECT 17, 'GL_JE_HEADERS', 'STATUS' FROM dual
+    UNION ALL SELECT 18, 'GL_LEDGERS', 'COMPLETE_FLAG' FROM dual
+    UNION ALL SELECT 18, 'GL_LEDGERS', 'LEDGER_ID' FROM dual
+    UNION ALL SELECT 18, 'GL_LEDGERS', 'NAME' FROM dual
+    UNION ALL SELECT 18, 'GL_LEDGERS', 'OBJECT_TYPE_CODE' FROM dual
+    UNION ALL SELECT 19, 'IBY_PAYMENT_METHODS_TL', 'LANGUAGE' FROM dual
+    UNION ALL SELECT 19, 'IBY_PAYMENT_METHODS_TL', 'PAYMENT_METHOD_CODE' FROM dual
+    UNION ALL SELECT 19, 'IBY_PAYMENT_METHODS_TL', 'PAYMENT_METHOD_NAME' FROM dual
+    UNION ALL SELECT 20, 'INV_ORGANIZATION_DEFINITIONS_V', 'ORGANIZATION_ID' FROM dual
+    UNION ALL SELECT 20, 'INV_ORGANIZATION_DEFINITIONS_V', 'SET_OF_BOOKS_ID' FROM dual
+    UNION ALL SELECT 21, 'PJF_PROJECTS_ALL_B', 'ORG_ID' FROM dual
+    UNION ALL SELECT 21, 'PJF_PROJECTS_ALL_B', 'PROJECT_ID' FROM dual
+    UNION ALL SELECT 21, 'PJF_PROJECTS_ALL_B', 'TEMPLATE_FLAG' FROM dual
+    UNION ALL SELECT 22, 'POR_REQUISITION_HEADERS_ALL', 'CREATION_DATE' FROM dual
+    UNION ALL SELECT 22, 'POR_REQUISITION_HEADERS_ALL', 'REQUISITION_HEADER_ID' FROM dual
+    UNION ALL SELECT 22, 'POR_REQUISITION_HEADERS_ALL', 'REQ_BU_ID' FROM dual
+    UNION ALL SELECT 23, 'POR_REQUISITION_LINES_ALL', 'PO_HEADER_ID' FROM dual
+    UNION ALL SELECT 23, 'POR_REQUISITION_LINES_ALL', 'REQUISITION_HEADER_ID' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'BILLTO_BU_ID' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'CANCEL_FLAG' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'CREATION_DATE' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'DOCUMENT_STATUS' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'PRC_BU_ID' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'REQ_BU_ID' FROM dual
+    UNION ALL SELECT 24, 'PO_HEADERS_ALL', 'TYPE_LOOKUP_CODE' FROM dual
+    UNION ALL SELECT 25, 'RA_CUSTOMER_TRX_ALL', 'CUST_TRX_TYPE_SEQ_ID' FROM dual
+    UNION ALL SELECT 25, 'RA_CUSTOMER_TRX_ALL', 'ORG_ID' FROM dual
+    UNION ALL SELECT 25, 'RA_CUSTOMER_TRX_ALL', 'TRX_DATE' FROM dual
+    UNION ALL SELECT 26, 'RA_CUST_TRX_TYPES_ALL', 'CUST_TRX_TYPE_SEQ_ID' FROM dual
+    UNION ALL SELECT 26, 'RA_CUST_TRX_TYPES_ALL', 'TYPE' FROM dual
+    UNION ALL SELECT 27, 'RCV_TRANSACTIONS', 'ORGANIZATION_ID' FROM dual
+    UNION ALL SELECT 27, 'RCV_TRANSACTIONS', 'PO_HEADER_ID' FROM dual
+    UNION ALL SELECT 27, 'RCV_TRANSACTIONS', 'SHIPMENT_HEADER_ID' FROM dual
+    UNION ALL SELECT 27, 'RCV_TRANSACTIONS', 'TRANSACTION_DATE' FROM dual
+    UNION ALL SELECT 27, 'RCV_TRANSACTIONS', 'TRANSACTION_TYPE' FROM dual
+    UNION ALL SELECT 28, 'WSH_NEW_DELIVERIES', 'INITIAL_PICKUP_DATE' FROM dual
+    UNION ALL SELECT 28, 'WSH_NEW_DELIVERIES', 'ORGANIZATION_ID' FROM dual
+    UNION ALL SELECT 28, 'WSH_NEW_DELIVERIES', 'STATUS_CODE' FROM dual
+    UNION ALL SELECT 29, 'XLA_SUBLEDGERS', 'APPLICATION_ID' FROM dual
+    UNION ALL SELECT 29, 'XLA_SUBLEDGERS', 'JE_SOURCE_NAME' FROM dual
+),
+cols AS (
+    SELECT  c.table_name, c.column_name, MAX(c.data_type) AS data_type
+    FROM    all_tab_columns c
+    WHERE   c.table_name IN ( SELECT n.tab FROM need n )
+    GROUP   BY c.table_name, c.column_name
+),
+need_check AS (
+    SELECT  n.ord, n.tab,
+            LISTAGG(CASE WHEN c.column_name IS NULL THEN n.col END, ', ')
+                WITHIN GROUP (ORDER BY n.col)                 AS missing,
+            LISTAGG(CASE WHEN c.data_type IN ('NVARCHAR2', 'NCHAR', 'NCLOB')
+                         THEN n.col || ' ' || c.data_type END, ', ')
+                WITHIN GROUP (ORDER BY n.col)                 AS nchar_cols
+    FROM        need n
+    LEFT JOIN   cols c ON c.table_name = n.tab AND c.column_name = n.col
+    GROUP   BY  n.ord, n.tab
+),
+all_cols AS (
+    SELECT  table_name,
+            LISTAGG(column_name, ' ' ON OVERFLOW TRUNCATE)
+                WITHIN GROUP (ORDER BY column_name)           AS col_list
+    FROM    cols
+    GROUP   BY table_name
+)
+SELECT  nc.ord                                              AS ord,
+        nc.tab                                              AS object_name,
+        CASE WHEN a.table_name IS NULL THEN '*** OBJECT NOT VISIBLE ***'
+             WHEN nc.missing IS NULL   THEN 'ALL OK'
+             ELSE '*** MISSING: ' || nc.missing || ' ***'
+        END                                                 AS needed_columns,
+        NVL(nc.nchar_cols, '-')                             AS national_charset_cols,
+        NVL(a.col_list, '-')                                AS columns_present
+FROM        need_check nc
+LEFT JOIN   all_cols   a ON a.table_name = nc.tab
+ORDER BY    nc.ord

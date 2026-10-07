@@ -1,0 +1,21 @@
+-- ============================================================================
+--  V10_2c  READ TEST - can the report user read the database version?
+--  Version   : 1.0 (2026-10-07)        Run log: 06_Run_Results/RUN_LOG.md
+--  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
+--  For: F10.1 row 5 (Database Version)
+--
+--  WHY: EBS tries V$INSTANCE (a catalog privilege) and falls back to
+--  PRODUCT_COMPONENT_VERSION. Oracle grants PRODUCT_COMPONENT_VERSION to
+--  PUBLIC by default; its VERSION_FULL column (18c and later) holds the
+--  release update. Only a read settles whether Fusion keeps that grant.
+--
+--  RESULT
+--    an error (ORA-00942 / ORA-01031) -> not readable. Send the error; a
+--        V$VERSION read test (also PUBLIC by default) follows.
+--    rows -> readable. Send the XML export: the "Oracle Database ..." row
+--        gives F10.1 row 5, printed as "<product name> (<major>.<release
+--        update>)".
+--  All rows, all columns. No binds. Pure SELECT. Nothing is written.
+-- ============================================================================
+SELECT  *
+FROM    product_component_version

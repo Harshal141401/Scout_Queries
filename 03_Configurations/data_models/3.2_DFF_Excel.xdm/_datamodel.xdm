@@ -1,0 +1,296 @@
+<?xml version = '1.0' encoding = 'utf-8'?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" defaultDataSourceRef="Oracle BI EE">
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="exclude_tags_for_lob" value="false"/>
+      <property name="EXCLUDE_LINE_FEED_AND_CARRIAGE_RETURN_FOR_LOB" value="false"/>
+      <property name="enable_sqlid_logging" value="true"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="enforce_validation_status" value="true"/>
+      <property name="optimize_query_executions" value="false"/>
+      <property name="enable_xml_chunks" value=""/>
+      <property name="sql_monitor_report_generated" value="false"/>
+   </dataProperties>
+   <dataSets>
+      <dataSet name="DFF_WB" type="complex">
+         <sql dataSourceRef="ApplicationDB_FSCM">
+            <![CDATA[-- ============================================================================
+--  F3.2 WB  Descriptive Flexfields workbook - one row per counted segment
+--  Workbook  : Fusion_Discovery_3_2_Descriptive_Flexfields.xlsx
+--              (EBS: EBS_Discovery_3_2_Descriptive_Flexfields.xlsx, 695 rows)
+--  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--              RUN V3_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
+--  Mirrors   : EBS agent _DFF_DETAIL_SQL
+--  RECONCILES  F3.2 summary: per APPLICATION, distinct DFF_NAME = DFFs and row
+--              count = Enabled Segments. Same population, built from the same
+--              CTEs (seg_keyed / user_accts / filters copied unchanged).
+-- ============================================================================
+WITH
+params AS (
+    SELECT :p_ledger_id     AS p_ledger_id,
+           :p_bu_id         AS p_bu_id,
+           :p_custom_prefix AS p_custom_prefix,
+           :p_from_date     AS p_from_date,
+           :p_to_date       AS p_to_date
+    FROM   dual
+),
+-- ---- SECTION 1 ASSESSED APPLICATIONS (copied unchanged from F1) ----------
+--  The 17 tables Section 1 reads, looked up in FND_TABLES ->
+--  FND_APPLICATION_VL, so 3.2 covers exactly the applications Section 1
+--  assesses. Keep in step with F1 if a table is added there.
+src_tables AS (
+    SELECT 'GL_JE_HEADERS' AS src_table FROM dual
+    UNION ALL
+    SELECT 'AP_INVOICES_ALL' FROM dual
+    UNION ALL
+    SELECT 'RA_CUSTOMER_TRX_ALL' FROM dual
+    UNION ALL
+    SELECT 'PO_HEADERS_ALL' FROM dual
+    UNION ALL
+    SELECT 'POR_REQUISITION_HEADERS_ALL' FROM dual
+    UNION ALL
+    SELECT 'DOO_HEADERS_ALL' FROM dual
+    UNION ALL
+    SELECT 'INV_MATERIAL_TXNS' FROM dual
+    UNION ALL
+    SELECT 'CE_STATEMENT_HEADERS' FROM dual
+    UNION ALL
+    SELECT 'CST_COST_DISTRIBUTIONS' FROM dual
+    UNION ALL
+    SELECT 'FA_TRANSACTION_HEADERS' FROM dual
+    UNION ALL
+    SELECT 'PJC_EXP_ITEMS_ALL' FROM dual
+    UNION ALL
+    SELECT 'WIE_WORK_ORDERS_B' FROM dual
+    UNION ALL
+    SELECT 'EGP_STRUCTURES_B' FROM dual
+    UNION ALL
+    SELECT 'WSH_NEW_DELIVERIES' FROM dual
+    UNION ALL
+    SELECT 'EXM_EXPENSE_REPORTS' FROM dual
+    UNION ALL
+    SELECT 'FLA_LEASES_ALL' FROM dual
+    UNION ALL
+    SELECT 'FUN_TRX_HEADERS' FROM dual
+),
+-- ---- MODULE = OWNING APPLICATION, READ FROM FUSION'S OWN REGISTRY -----------
+--  No module name or code is typed in this query. Each assessed table is
+--  looked up in FND_TABLES (the Fusion table registry), whose
+--  APPLICATION_SHORT_NAME is the application that owns the table. The display
+--  name and application id come from FND_APPLICATION_VL, matched on
+--  APPLICATION_SHORT_NAME. (Fusion FND_TABLES has NO APPLICATION_ID column -
+--  ORA-00904 on the pod, 2026-10-01.)
+--    - registered and named      -> '<application name> (<short name>)'
+--    - registered, no name row   -> '<short name>'   (still read from data)
+--    - not registered            -> 'Not registered: <TABLE>' (never guessed)
+--  The table is matched on TABLE_NAME or PHYSICAL_TABLE_NAME (both confirmed
+--  on the pod by V0_0, 2026-10-01), so a logical/physical naming difference
+--  cannot turn a registered table into 'Not registered'.
+--  MIN() makes the lookup one row per table even if a table were registered
+--  under two applications (V0_3 block G prints the registration count).
+tab_app AS (
+    SELECT  s.src_table,
+            MIN(ft.application_short_name) AS app_short
+    FROM        src_tables s
+    LEFT JOIN   fnd_tables ft
+           ON   ft.table_name          = s.src_table
+            OR  ft.physical_table_name = s.src_table
+    GROUP   BY  s.src_table
+),
+app_names AS (
+    SELECT  a.application_short_name      AS short_name,
+            MIN(a.application_id)         AS application_id,
+            MAX(a.application_name)       AS app_name
+    FROM    fnd_application_vl a
+    WHERE   EXISTS ( SELECT 1 FROM tab_app t
+                     WHERE  t.app_short = a.application_short_name )
+    GROUP   BY a.application_short_name
+),
+-- ---- segments: one row per business key -----------------------------------
+seg_keyed AS (
+    SELECT  s.application_id,
+            s.descriptive_flexfield_code,
+            s.context_code,
+            s.segment_code,
+            MAX(s.enabled_flag)     AS enabled_flag,
+            MAX(s.last_updated_by)  AS last_updated_by,
+            MAX(s.created_by)       AS created_by,
+            MAX(s.column_name)      AS column_name,
+            MAX(s.sequence_number)  AS seg_seq,
+            MAX(s.required_flag)    AS required_flag,
+            MAX(s.display_type)     AS display_type,
+            MAX(s.display_width)    AS display_width,
+            MAX(s.value_set_id)     AS value_set_id
+    FROM    fnd_df_segments_b s
+    WHERE   s.context_code <> 'Context Data Element'
+    AND     s.descriptive_flexfield_code NOT LIKE '$SRS$.%'
+    AND     UPPER(s.descriptive_flexfield_code) NOT LIKE '%INTERFACE%'
+    GROUP   BY s.application_id, s.descriptive_flexfield_code,
+               s.context_code, s.segment_code
+),
+-- user accounts (a person, an implementer, an integration user...) - one row each
+user_accts AS (
+    SELECT  UPPER(pu.username) AS uname
+    FROM    per_users pu
+    WHERE   pu.username IS NOT NULL
+    GROUP   BY UPPER(pu.username)
+),
+-- application short name for ANY application id (labels outside-scope rows)
+all_apps AS (
+    SELECT  a.application_id, MAX(a.application_short_name) AS app_short
+    FROM    fnd_application_vl a
+    GROUP   BY a.application_id
+),
+-- the counted segments: enabled AND last edited by a user account
+custom_segs AS (
+    SELECT  k.*
+    FROM        seg_keyed  k
+    JOIN        user_accts ua ON ua.uname = UPPER(k.last_updated_by)
+    WHERE       k.enabled_flag = 'Y'
+),
+-- ---- names, one language per key ------------------------------------------
+flex_titles AS (
+    SELECT  t.application_id, t.descriptive_flexfield_code,
+            MAX(t.name) KEEP (DENSE_RANK FIRST ORDER BY
+                CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)  AS dff_title
+    FROM    fnd_df_flexfields_tl t
+    WHERE   t.language IN (USERENV('LANG'), 'US')
+    GROUP   BY t.application_id, t.descriptive_flexfield_code
+),
+ctx_names AS (
+    SELECT  t.application_id, t.descriptive_flexfield_code, t.context_code,
+            MAX(t.name) KEEP (DENSE_RANK FIRST ORDER BY
+                CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)  AS ctx_name
+    FROM    fnd_df_contexts_tl t
+    WHERE   t.language IN (USERENV('LANG'), 'US')
+    GROUP   BY t.application_id, t.descriptive_flexfield_code, t.context_code
+),
+seg_prompts AS (
+    SELECT  t.application_id, t.descriptive_flexfield_code, t.context_code,
+            t.segment_code,
+            MAX(t.prompt) KEEP (DENSE_RANK FIRST ORDER BY
+                CASE WHEN t.language = USERENV('LANG') THEN 0 ELSE 1 END)  AS prompt
+    FROM    fnd_df_segments_tl t
+    WHERE   t.language IN (USERENV('LANG'), 'US')
+    GROUP   BY t.application_id, t.descriptive_flexfield_code, t.context_code,
+               t.segment_code
+),
+-- base table(s) per DFF, only for DFFs that have counted segments
+base_tables AS (
+    SELECT  application_id, descriptive_flexfield_name,
+            LISTAGG(application_table_name, ', ')
+                WITHIN GROUP (ORDER BY application_table_name)      AS base_table
+    FROM  ( SELECT f.application_id, f.descriptive_flexfield_name,
+                   f.application_table_name
+            FROM   fnd_descriptive_flexs f
+            WHERE  f.application_table_name IS NOT NULL
+            AND    EXISTS ( SELECT 1 FROM custom_segs c
+                            WHERE  c.application_id             = f.application_id
+                            AND    c.descriptive_flexfield_code = f.descriptive_flexfield_name )
+            GROUP  BY f.application_id, f.descriptive_flexfield_name,
+                      f.application_table_name )
+    GROUP   BY application_id, descriptive_flexfield_name
+),
+value_sets AS (
+    SELECT  vs.flex_value_set_id, MAX(vs.flex_value_set_name) AS vs_name
+    FROM    fnd_flex_value_sets vs
+    GROUP   BY vs.flex_value_set_id
+),
+-- application label, identical to the F3.2 summary
+app_label AS (
+    SELECT  c.application_id,
+            CASE WHEN MAX(an.short_name) IS NOT NULL THEN 1 ELSE 2 END    AS grp,
+            NVL(MAX(an.short_name),
+                NVL(MAX(aa.app_short), TO_CHAR(c.application_id))
+                  || ' (outside Section 1 scope)')                       AS app_label
+    FROM        ( SELECT application_id FROM custom_segs GROUP BY application_id ) c
+    LEFT JOIN   app_names an ON an.application_id = c.application_id
+    LEFT JOIN   all_apps  aa ON aa.application_id = c.application_id
+    GROUP   BY  c.application_id
+)
+SELECT
+    al.app_label                                              AS "APPLICATION",
+    c.descriptive_flexfield_code                              AS "DFF_NAME",
+    ft.dff_title                                              AS "DFF_TITLE",
+    bt.base_table                                             AS "BASE_TABLE",
+    c.context_code                                            AS "CONTEXT_CODE",
+    cn.ctx_name                                               AS "CONTEXT_NAME",
+    c.seg_seq                                                 AS "SEGMENT_SEQ",
+    c.segment_code                                            AS "SEGMENT_NAME",
+    c.column_name                                             AS "COLUMN_NAME",
+    sp.prompt                                                 AS "PROMPT",
+    c.required_flag                                           AS "REQUIRED",
+    CASE WHEN c.display_type = 'HIDDEN' THEN 'N' ELSE 'Y' END AS "DISPLAYED",
+    c.display_width                                           AS "SIZE_CHARS",
+    vs.vs_name                                                AS "VALUE_SET",
+    c.created_by                                              AS "CREATED_BY",
+    c.last_updated_by                                         AS "LAST_UPDATED_BY"
+FROM        custom_segs c
+JOIN        app_label   al ON al.application_id = c.application_id
+LEFT JOIN   flex_titles ft ON ft.application_id             = c.application_id
+                          AND ft.descriptive_flexfield_code = c.descriptive_flexfield_code
+LEFT JOIN   base_tables bt ON bt.application_id             = c.application_id
+                          AND bt.descriptive_flexfield_name = c.descriptive_flexfield_code
+LEFT JOIN   ctx_names   cn ON cn.application_id             = c.application_id
+                          AND cn.descriptive_flexfield_code = c.descriptive_flexfield_code
+                          AND cn.context_code               = c.context_code
+LEFT JOIN   seg_prompts sp ON sp.application_id             = c.application_id
+                          AND sp.descriptive_flexfield_code = c.descriptive_flexfield_code
+                          AND sp.context_code               = c.context_code
+                          AND sp.segment_code               = c.segment_code
+LEFT JOIN   value_sets  vs ON vs.flex_value_set_id          = c.value_set_id
+ORDER BY    al.grp, al.app_label, c.descriptive_flexfield_code,
+            c.context_code, c.seg_seq, c.segment_code
+]]>
+         </sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false">
+      <nodeList name="data-structure">
+         <dataStructure tagName="DATA_DS">
+            <group name="G_1" label="G_1" source="DFF_WB">
+               <element name="APPLICATION" value="APPLICATION" label="APPLICATION" dataType="xsd:string" breakOrder="" fieldOrder="1"/>
+               <element name="DFF_NAME" value="DFF_NAME" label="DFF_NAME" dataType="xsd:string" breakOrder="" fieldOrder="2"/>
+               <element name="DFF_TITLE" value="DFF_TITLE" label="DFF_TITLE" dataType="xsd:string" breakOrder="" fieldOrder="3"/>
+               <element name="BASE_TABLE" value="BASE_TABLE" label="BASE_TABLE" dataType="xsd:string" breakOrder="" fieldOrder="4"/>
+               <element name="CONTEXT_CODE" value="CONTEXT_CODE" label="CONTEXT_CODE" dataType="xsd:string" breakOrder="" fieldOrder="5"/>
+               <element name="CONTEXT_NAME" value="CONTEXT_NAME" label="CONTEXT_NAME" dataType="xsd:string" breakOrder="" fieldOrder="6"/>
+               <element name="SEGMENT_SEQ" value="SEGMENT_SEQ" label="SEGMENT_SEQ" dataType="xsd:double" breakOrder="" fieldOrder="7"/>
+               <element name="SEGMENT_NAME" value="SEGMENT_NAME" label="SEGMENT_NAME" dataType="xsd:string" breakOrder="" fieldOrder="8"/>
+               <element name="COLUMN_NAME" value="COLUMN_NAME" label="COLUMN_NAME" dataType="xsd:string" breakOrder="" fieldOrder="9"/>
+               <element name="PROMPT" value="PROMPT" label="PROMPT" dataType="xsd:string" breakOrder="" fieldOrder="10"/>
+               <element name="REQUIRED" value="REQUIRED" label="REQUIRED" dataType="xsd:string" breakOrder="" fieldOrder="11"/>
+               <element name="DISPLAYED" value="DISPLAYED" label="DISPLAYED" dataType="xsd:string" breakOrder="" fieldOrder="12"/>
+               <element name="SIZE_CHARS" value="SIZE_CHARS" label="SIZE_CHARS" dataType="xsd:double" breakOrder="" fieldOrder="13"/>
+               <element name="VALUE_SET" value="VALUE_SET" label="VALUE_SET" dataType="xsd:string" breakOrder="" fieldOrder="14"/>
+               <element name="CREATED_BY" value="CREATED_BY" label="CREATED_BY" dataType="xsd:string" breakOrder="" fieldOrder="15"/>
+               <element name="LAST_UPDATED_BY" value="LAST_UPDATED_BY" label="LAST_UPDATED_BY" dataType="xsd:string" breakOrder="" fieldOrder="16"/>
+            </group>
+         </dataStructure>
+      </nodeList>
+   </output>
+   <eventTriggers/>
+   <lexicals/>
+   <parameters>
+      <parameter name="p_bu_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_bu_id"/>
+      </parameter>
+      <parameter name="p_ledger_id" dataType="xsd:string" rowPlacement="1">
+         <input label="p_ledger_id"/>
+      </parameter>
+   </parameters>
+   <valueSets/>
+   <bursting/>
+   <validations>
+      <validation>N</validation>
+   </validations>
+   <display>
+      <layouts>
+         <layout name="DFF_WB" left="280px" top="0px"/>
+         <layout name="DATA_DS" left="0px" top="267px"/>
+      </layouts>
+      <groupLinks/>
+   </display>
+</dataModel>
