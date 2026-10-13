@@ -1,6 +1,21 @@
 -- ============================================================================
 --  F4.2  Section 4.2 Order-to-cash (O2C) flow
---  Version   : 1.1 (2026-10-05). v1.0 failed on the pod with ORA-12704 (R009):
+--  Version   : 1.3 (2026-10-13). Counts aligned with the functional consultant,
+--              proven by V4_3 (run 2026-10-13, blank dates: 5,913 / 8,744 / 327):
+--              * Sales Orders and RMA count SUBMITTED orders only. The 1,078
+--                never submitted (DOO_DRAFT 1,073, DOO_APPROVAL_PENDING 5) are
+--                left out; v1.2 counted them (EBS parity).
+--              * Sales Orders include the RMAs, as the consultant counts them;
+--                RMA is the return subset. v1.2 counted non-return orders only.
+--              * Deliveries count every status (CL 8,322 + OP 422); v1.2
+--                counted CL (ship-confirmed) only.
+--              Scope, window, dates and one-row-per-order are unchanged.
+--              v1.2 (2026-10-13). Blank dates now mean ALL history, not the last
+--              90 days (shared block v3.2, user 2026-10-13): a blank from-date
+--              has no lower bound and a blank to-date no upper bound. Dates
+--              entered work as before. Only the WIN block changed; every
+--              filter is unchanged.
+--              v1.1 (2026-10-05). v1.0 failed on the pod with ORA-12704 (R009):
 --              UNISTR returns NVARCHAR2 and was mixed with VARCHAR2 rows in a
 --              UNION ALL. The middle dot is now TO_CHAR(UNISTR('\00B7')),
 --              i.e. plain VARCHAR2. Logic unchanged.
@@ -12,7 +27,7 @@
 
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2),
 --      so Section 4 measures the same population and window as Section 1.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
@@ -24,8 +39,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -75,7 +90,10 @@ order_hdr AS (
                                                                     AS ordered_date,
            MAX(dh.org_id) KEEP (DENSE_RANK FIRST ORDER BY
                CASE WHEN dh.submitted_flag = 'Y' THEN 0 ELSE 1 END, dh.header_id DESC)
-                                                                    AS org_id
+                                                                    AS org_id,
+           -- 1 when any version was submitted; drafts and approval-pending
+           -- orders never were (v1.3)
+           MAX(CASE WHEN dh.submitted_flag = 'Y' THEN 1 ELSE 0 END)  AS ever_submitted
     FROM   doo_headers_all dh
     GROUP  BY dh.order_number, dh.source_order_system
 ),
@@ -99,20 +117,22 @@ orders_in_win AS (
                                  = NVL(o.source_order_system, '~')
     WHERE       o.ordered_date >= w.start_date
     AND         o.ordered_date <  w.end_date_excl
+    AND         o.ever_submitted = 1
 ),
+-- Sales Orders = every submitted order, returns included (the consultant's
+-- count); RMA = the ones with a return line (v1.3)
 so_cnt AS (
-    SELECT NVL(SUM(1 - is_return), 0) AS sales_orders,
+    SELECT COUNT(*)                   AS sales_orders,
            NVL(SUM(is_return), 0)     AS rma
     FROM   orders_in_win
 ),
--- ---- deliveries: ship-confirmed, by first pickup date ------------------------
+-- ---- deliveries: every status (v1.3; v1.2 counted CL only), by first pickup date
 dlv_cnt AS (
     SELECT COUNT(*) AS cnt
     FROM   wsh_new_deliveries wnd
     JOIN   inv_org_scope ios ON ios.organization_id = wnd.organization_id
     CROSS  JOIN win w
-    WHERE  wnd.status_code = 'CL'
-    AND    wnd.initial_pickup_date >= w.start_date
+    WHERE  wnd.initial_pickup_date >= w.start_date
     AND    wnd.initial_pickup_date <  w.end_date_excl
 ),
 -- ---- AR transactions, typed through the type's primary key ------------------

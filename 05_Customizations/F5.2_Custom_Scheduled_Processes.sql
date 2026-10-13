@@ -13,7 +13,8 @@
 --              0 / 0 - EBS numbers, not targets)
 --  Window    : WINDOWED. Executions (period) use the shared win block, the same
 --              dates as F1 (report window: 2025-04-01 to 2026-03-31). Blank
---              dates = last 90 days. The all-time columns ignore the window.
+--              dates = all history (shared block v3.2, 2026-10-13; was the
+--              last 90 days). The all-time columns ignore the window.
 --  Scope     : pod-wide (ESS is a pod service). :p_ledger_id / :p_bu_id /
 --              :p_custom_prefix are accepted and not used (parameter parity).
 --  Output    : the FULL list, one row per custom job definition, ordered by
@@ -60,7 +61,7 @@
 --  purge caveat.
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2).
 --      Section 5 is pod-wide, so only params and win are read; the rest is
 --      kept for parity with every other query.
 params AS (
@@ -73,8 +74,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------

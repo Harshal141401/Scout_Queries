@@ -47,7 +47,7 @@
 --    A source that returns no rows to the report user gives a blank, never 0.
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2).
 --      Section 10 is pod-wide and reads none of it; it is kept for parity with
 --      every other query.
 params AS (
@@ -60,8 +60,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------

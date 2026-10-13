@@ -1,7 +1,10 @@
 -- ============================================================================
 --  V0_3  EXPLAIN THE EXECUTIVE SUMMARY - who and what is behind each F0 card
---  Version   : shared block v3.1 (2026-10-01) - modules read from FND_TABLES ->
---              FND_APPLICATION_VL. Run history: 06_Run_Results/RUN_LOG.md
+--  Version   : shared block v3.2 (2026-10-13) - blank dates now mean all
+--              history (no lower / upper bound), not the last 90 days; only
+--              the win block changed. v3.1 (2026-10-01) - modules read from
+--              FND_TABLES -> FND_APPLICATION_VL.
+--              Run history: 06_Run_Results/RUN_LOG.md
 --  Run with EXACTLY the same parameter values as F0. Paste the grid back.
 --
 --  The block from "params" to "txn_mod" is copied byte-for-byte from F1 (and
@@ -41,8 +44,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -452,9 +455,12 @@ grid AS (
     FROM    params p
     UNION ALL
     SELECT  11, 'A PARAMETERS', 'date window used (inclusive)',
-            TO_CHAR(w.start_date, 'YYYY-MM-DD') || ' to ' ||
-            TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD')
+            CASE WHEN p.p_from_date IS NULL THEN 'start of history'
+                 ELSE TO_CHAR(w.start_date, 'YYYY-MM-DD') END || ' to ' ||
+            CASE WHEN p.p_to_date IS NULL THEN 'latest record'
+                 ELSE TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD') END
     FROM    win w
+    CROSS   JOIN params p
     UNION ALL
     SELECT  10000 + r.rn, 'B LEDGERS (card 2)', r.led_name,
             r.ledger_category_code || ' / ledger_id ' || r.ledger_id

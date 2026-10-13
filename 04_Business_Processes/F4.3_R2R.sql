@@ -1,6 +1,12 @@
 -- ============================================================================
 --  F4.3  Section 4.3 Record-to-report (R2R)
---  Version   : 1.1 (2026-10-05). Not yet run on a pod. v1.1: GL_LEDGERS.NAME is
+--  Version   : 1.2 (2026-10-13). Not yet run on a pod. v1.2: blank dates mean
+--              all history (shared block v3.2). The Frequency denominator
+--              (win_len) then runs from the first journal / statement day
+--              read (blank from-date) and up to today (blank to-date), so the
+--              open window is not measured from year 0001. Dates entered:
+--              unchanged. win_len moved below "bank", which it now reads.
+--              v1.1 (2026-10-05): GL_LEDGERS.NAME is
 --              wrapped in TO_CHAR so the UNION ALL with the typed 'Instance-wide'
 --              label cannot raise ORA-12704 if the column is NVARCHAR2 (see
 --              R009 / R010 on F4.1). Logic unchanged.
@@ -28,7 +34,7 @@
 --
 --  PARAMETERS  the five standard binds, all optional - same meaning as F1:
 --    :p_ledger_id / :p_bu_id narrow the scope; :p_from_date / :p_to_date
---    ('YYYY-MM-DD') set the window, blank = the last 90 days up to today.
+--    ('YYYY-MM-DD') set the window, blank = all history (open-ended).
 --    Run every Section 4 query with the SAME values as F1, or the numbers
 --    stop being comparable (see 06_Run_Results/RUN_LOG.md).
 --  SCOPE (identical to F1, which is the EBS 1.1 / 4.x rule with BU for OU)
@@ -42,7 +48,7 @@
 --  (R006 / the F1 run); V4_0 re-checks them.
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2),
 --      so Section 4 measures the same population and window as Section 1.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
@@ -54,8 +60,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -119,9 +125,6 @@ jrnl_src AS (
     FROM  ( SELECT ledger_id, je_source FROM jrnl GROUP BY ledger_id, je_source )
     GROUP BY ledger_id
 ),
-win_len AS (
-    SELECT w.end_date_excl - w.start_date AS days FROM win w
-),
 -- ---- bank statements, instance-wide -------------------------------------------
 bank AS (
     SELECT TRUNC(cs.creation_date) AS stmt_day
@@ -136,6 +139,25 @@ bank_vol AS (
 bank_days AS (
     SELECT COUNT(*) AS active_days
     FROM  ( SELECT stmt_day FROM bank GROUP BY stmt_day )
+),
+-- first journal / statement day read: where an open (blank) from-date starts
+first_act AS (
+    SELECT MIN(d) AS first_day
+    FROM  ( SELECT MIN(jrnl_day) AS d FROM jrnl
+            UNION ALL
+            SELECT MIN(stmt_day) FROM bank )
+),
+-- window length in days for the frequency rule. Dates entered: end - start,
+-- as before. A blank date is open-ended (shared block v3.2), so the length
+-- then starts at the first day read and ends today.
+win_len AS (
+    SELECT CASE WHEN p.p_to_date   IS NULL THEN TRUNC(SYSDATE) + 1
+                ELSE w.end_date_excl END
+         - CASE WHEN p.p_from_date IS NULL THEN NVL(f.first_day, TRUNC(SYSDATE))
+                ELSE w.start_date END                    AS days
+    FROM        win       w
+    CROSS JOIN  params    p
+    CROSS JOIN  first_act f
 ),
 r2r_rows AS (
     SELECT  1                                  AS grp,

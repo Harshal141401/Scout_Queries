@@ -1,7 +1,10 @@
 -- ============================================================================
 --  F0  Executive Summary - 5 headline cards
---  Version   : shared block v3.1 (2026-10-01) - modules read from FND_TABLES ->
---              FND_APPLICATION_VL. Run history: 06_Run_Results/RUN_LOG.md
+--  Version   : shared block v3.2 (2026-10-13) - blank dates now mean all
+--              history (no lower / upper bound), not the last 90 days; only
+--              the win block changed. v3.1 (2026-10-01) - modules read from
+--              FND_TABLES -> FND_APPLICATION_VL.
+--              Run history: 06_Run_Results/RUN_LOG.md
 --  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
 --  Mirrors   : EBS 0_Executive_Summary_v2.sql (report 30-Sep-2026: 37/1/6/4/16)
 --  Replaces  : Fusion draft Executive_Summary.sql, which is NOT the same metric
@@ -47,8 +50,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------

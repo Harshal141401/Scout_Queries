@@ -1,6 +1,9 @@
 -- ============================================================================
 --  F5.2b Section 5.2 caption: how far back ESS request history goes
---  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--  Version   : 1.1 (2026-10-13). Not yet run on a pod. v1.1: blank dates mean
+--              all history (shared block v3.2), so PERIOD_START / PERIOD_END
+--              print "start of history" / "latest record" instead of the
+--              open-ended bounds. Coverage test unchanged.
 --              RUN V5_0 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
 --  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
 --  Mirrors   : EBS agent ebs_discover_cemli request_history block (agent
@@ -28,7 +31,7 @@
 --    (EBS reported overlap yes / no; Full / Partial is the same test, split.)
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2).
 --      Only params and win are read; the rest is kept for parity.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
@@ -40,8 +43,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -94,8 +97,10 @@ SELECT
     h.requests                                                AS "REQUESTS_RETAINED",
     TO_CHAR(h.first_start, 'YYYY-MM-DD')                      AS "FIRST_REQUEST",
     TO_CHAR(h.last_start,  'YYYY-MM-DD')                      AS "LAST_REQUEST",
-    TO_CHAR(w.start_date, 'YYYY-MM-DD')                       AS "PERIOD_START",
-    TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD')                AS "PERIOD_END",
+    CASE WHEN p.p_from_date IS NULL THEN 'start of history'
+         ELSE TO_CHAR(w.start_date, 'YYYY-MM-DD') END         AS "PERIOD_START",
+    CASE WHEN p.p_to_date IS NULL THEN 'latest record'
+         ELSE TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD') END  AS "PERIOD_END",
     CASE WHEN h.requests = 0
          THEN 'Unknown: no request has started in retained history'
          WHEN h.last_start < w.start_date OR h.first_start >= w.end_date_excl
@@ -104,5 +109,6 @@ SELECT
          THEN 'Full: retained history starts on or before the period start'
          ELSE 'Partial: retained history starts inside the period, on ' || TO_CHAR(h.first_start, 'YYYY-MM-DD')
     END                                                       AS "PERIOD_COVERAGE"
-FROM        hist h
-CROSS JOIN  win  w
+FROM        hist   h
+CROSS JOIN  win    w
+CROSS JOIN  params p

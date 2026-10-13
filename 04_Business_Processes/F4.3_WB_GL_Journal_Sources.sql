@@ -21,7 +21,8 @@
 --
 --  PARAMETERS  the five standard binds, all optional - same meaning as F1:
 --    :p_ledger_id / :p_bu_id narrow the scope; :p_from_date / :p_to_date
---    ('YYYY-MM-DD') set the window, blank = the last 90 days up to today.
+--    ('YYYY-MM-DD') set the window, blank = all history (open-ended,
+--    shared block v3.2, 2026-10-13; was the last 90 days up to today).
 --    Run every Section 4 query with the SAME values as F1, or the numbers
 --    stop being comparable (see 06_Run_Results/RUN_LOG.md).
 --  SCOPE (identical to F1, which is the EBS 1.1 / 4.x rule with BU for OU)
@@ -32,7 +33,7 @@
 --    inventory orgs   receipts, deliveries, items, costing (inv_org_scope)
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2),
 --      so Section 4 measures the same population and window as Section 1.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
@@ -44,8 +45,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------

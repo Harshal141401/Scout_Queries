@@ -1,6 +1,15 @@
 -- ============================================================================
 --  F4.1  Section 4.1 Procure-to-pay (P2P) flow
---  Version   : 1.3 (2026-10-05). Row 2 (purchase orders) "not cancelled" now also
+--  Version   : 1.5 (2026-10-13). "Total purchase orders" now has sub-rows
+--              Standard / Blanket / Planned, like the AP invoice types: the
+--              same POs, counted by TYPE_LOOKUP_CODE in po_cnt (they add up to
+--              the total). Filters and counts unchanged; presentation only.
+--              v1.4 (2026-10-13). Blank dates now mean ALL history, not the last
+--              90 days (shared block v3.2, user 2026-10-13): a blank from-date
+--              has no lower bound and a blank to-date no upper bound. Dates
+--              entered work as before. Only the WIN block changed; every
+--              filter is unchanged.
+--              v1.3 (2026-10-05). Row 2 (purchase orders) "not cancelled" now also
 --              tests DOCUMENT_STATUS: R024 (V7_1 block B) showed CANCEL_FLAG is
 --              never set on this pod's POs - all 260 STANDARD POs with
 --              DOCUMENT_STATUS CANCELED have CANCEL_FLAG empty - so the v1.2
@@ -23,7 +32,7 @@
 --              EBS numbers, not targets)
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1),
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2),
 --      so Section 4 measures the same population and window as Section 1.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
@@ -35,8 +44,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -92,7 +101,11 @@ req_cnt AS (
 ),
 -- ---- 2 purchase orders: STANDARD / BLANKET / PLANNED, not cancelled --------
 po_cnt AS (
-    SELECT COUNT(*) AS cnt
+    SELECT COUNT(*) AS cnt,
+           -- v1.5: the same POs split by type (the three add up to cnt)
+           NVL(SUM(CASE WHEN ph.type_lookup_code = 'STANDARD' THEN 1 ELSE 0 END), 0) AS std_cnt,
+           NVL(SUM(CASE WHEN ph.type_lookup_code = 'BLANKET'  THEN 1 ELSE 0 END), 0) AS blanket_cnt,
+           NVL(SUM(CASE WHEN ph.type_lookup_code = 'PLANNED'  THEN 1 ELSE 0 END), 0) AS planned_cnt
     FROM   po_headers_all ph
     CROSS  JOIN win w
     WHERE  ph.type_lookup_code IN ('STANDARD', 'BLANKET', 'PLANNED')
@@ -176,19 +189,27 @@ p2p_rows AS (
     UNION ALL
     SELECT 2, 0, 'Total purchase orders', c.cnt FROM po_cnt c
     UNION ALL
-    SELECT 3, 0, 'Total PO receipts', c.cnt FROM rcv_cnt c
+    -- v1.5: PO sub-rows in a fixed order (Standard, Blanket, Planned); a type
+    -- with no PO still shows 0
+    SELECT 3, 3, TO_CHAR(TO_CHAR(UNISTR('\00B7')) || ' Standard'), c.std_cnt FROM po_cnt c
     UNION ALL
-    SELECT 4, 0, 'Total AP invoices', c.cnt FROM ap_total c
+    SELECT 3, 2, TO_CHAR(TO_CHAR(UNISTR('\00B7')) || ' Blanket'), c.blanket_cnt FROM po_cnt c
     UNION ALL
-    SELECT 5, t.cnt,
+    SELECT 3, 1, TO_CHAR(TO_CHAR(UNISTR('\00B7')) || ' Planned'), c.planned_cnt FROM po_cnt c
+    UNION ALL
+    SELECT 4, 0, 'Total PO receipts', c.cnt FROM rcv_cnt c
+    UNION ALL
+    SELECT 5, 0, 'Total AP invoices', c.cnt FROM ap_total c
+    UNION ALL
+    SELECT 6, t.cnt,
            TO_CHAR(TO_CHAR(UNISTR('\00B7')) || ' ' || NVL(n.meaning, TO_CHAR(t.inv_type))),
            t.cnt
     FROM        ap_by_type     t
     LEFT JOIN   inv_type_names n ON n.lookup_code = t.inv_type
     UNION ALL
-    SELECT 6, 0, 'Total payments', c.cnt FROM pay_total c
+    SELECT 7, 0, 'Total payments', c.cnt FROM pay_total c
     UNION ALL
-    SELECT 7, m.cnt,
+    SELECT 8, m.cnt,
            TO_CHAR(TO_CHAR(UNISTR('\00B7')) || ' '
                    || NVL(mn.method_name, NVL(TO_CHAR(m.method_code), '(no method)'))),
            m.cnt

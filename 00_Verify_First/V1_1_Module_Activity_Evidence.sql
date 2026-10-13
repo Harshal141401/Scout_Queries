@@ -1,7 +1,11 @@
 -- ============================================================================
 --  V1_1  Module activity EVIDENCE - why each module counts as Active in F1
---  Version   : 1.0 (2026-10-01), built on shared block v3.1 (same scope, same
---              window, same registry module names as F0 / F1 / F1.2)
+--  Version   : 1.1 (2026-10-13), built on shared block v3.2 (same scope, same
+--              window, same registry module names as F0 / F1 / F1.2).
+--              v1.1: blank dates mean all history (v3.2). "Window" then reads
+--              "start of history" / "latest record", the history is every
+--              row read, and "Months active" counts out of the months from
+--              the first to the last row read. Dates entered: unchanged.
 --  Run log   : 06_Run_Results/RUN_LOG.md (log the output as the next Rnnn)
 --
 --  WHY THIS EXISTS
@@ -18,7 +22,7 @@
 --        recent burst (testing, a pilot, a one-off load)
 --
 --  PARAMETERS  identical to F1 - run with EXACTLY the values used for F1
---    (blank = whole pod, last 90 days). Then "Users (window)" must equal F1's
+--    (blank = whole pod, all history). Then "Users (window)" must equal F1's
 --    "Users (period)" for every Active module; if not, this query is wrong.
 --
 --  CREATOR CLASS  (read from data, nothing typed)
@@ -33,6 +37,9 @@
 --    before the window end (or the window start if that is earlier), so
 --    "Months active" = calendar months with at least one row, out of the
 --    months shown in "History from". Same date column per module as F1.
+--    A blank date leaves that side of the window open, so the history is
+--    every row read; "History from" is then the first row read, and the
+--    months run from the first to the last row read.
 --
 --  OUTPUT  one row per module (Active first, in F1 order, then Dormant).
 --  No DISTINCT, no PL/SQL, one statement, nothing written.
@@ -48,8 +55,8 @@ params AS (
 ),
 -- ---- WINDOW: identical in F0 and F1 -------------------------------------
 win AS (
-    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'), TRUNC(SYSDATE) - 90) AS start_date,
-           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD'), TRUNC(SYSDATE)) + 1  AS end_date_excl
+    SELECT NVL(TO_DATE(p.p_from_date, 'YYYY-MM-DD'),     DATE '0001-01-01') AS start_date,
+           NVL(TO_DATE(p.p_to_date,   'YYYY-MM-DD') + 1, DATE '9999-12-31') AS end_date_excl
     FROM   params p
 ),
 -- ---- SCOPE BLOCK: identical in F0 and F1 --------------------------------
@@ -430,14 +437,29 @@ src_list AS (
     FROM    modules
     GROUP   BY module
 ),
+-- first / last row read over all modules: the history bounds when a date is
+-- blank (the window is then open-ended, shared block v3.2)
+hist_span AS (
+    SELECT  MIN(first_dt) AS first_dt, MAX(last_dt) AS last_dt
+    FROM    hist_rng
+),
 run_ctx AS (
-    SELECT  TO_CHAR(w.start_date, 'YYYY-MM-DD') || ' to '
-              || TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD')                  AS window_txt,
-            TO_CHAR(w.hist_start, 'YYYY-MM-DD')                              AS hist_txt,
-            MONTHS_BETWEEN(TRUNC(w.end_date_excl - 1, 'MM'),
-                           TRUNC(w.hist_start, 'MM')) + 1                    AS hist_months,
+    SELECT  CASE WHEN p.p_from_date IS NULL THEN 'start of history'
+                 ELSE TO_CHAR(w.start_date, 'YYYY-MM-DD') END || ' to '
+              || CASE WHEN p.p_to_date IS NULL THEN 'latest record'
+                      ELSE TO_CHAR(w.end_date_excl - 1, 'YYYY-MM-DD') END   AS window_txt,
+            TO_CHAR(CASE WHEN p.p_from_date IS NULL THEN hs.first_dt
+                         ELSE w.hist_start END, 'YYYY-MM-DD')                AS hist_txt,
+            MONTHS_BETWEEN(TRUNC(CASE WHEN p.p_to_date IS NULL
+                                      THEN NVL(hs.last_dt, SYSDATE)
+                                      ELSE w.end_date_excl - 1 END, 'MM'),
+                           TRUNC(CASE WHEN p.p_from_date IS NULL
+                                      THEN NVL(hs.first_dt, SYSDATE)
+                                      ELSE w.hist_start END, 'MM')) + 1      AS hist_months,
             SYS_CONTEXT('USERENV', 'DB_NAME')                                AS pod_db
-    FROM    win12 w
+    FROM        win12     w
+    CROSS JOIN  params    p
+    CROSS JOIN  hist_span hs
 )
 SELECT
     ml.module                                                   AS "Module",

@@ -22,7 +22,7 @@
 --                (to-date blank = today, so the current month is partial).
 --                Run on 05-Oct-2026 with no dates -> May-26 .. Oct-26.
 --                This differs from every other windowed query, where blank
---                dates mean the last 90 days.
+--                dates mean all history (shared block v3.2, 2026-10-13).
 --  Scope     : the shared block - BUs of the ledger (orders, POs, AR, AP),
 --              inventory orgs of the ledger (work orders), the ledger (GL).
 --              Blank ledger / BU = the whole pod.
@@ -34,8 +34,9 @@
 --  THE SIX CHARTS (EBS module -> Fusion; date and filter = the EBS rule)
 --    1 Sales Orders       OE_ORDER_HEADERS_ALL -> DOO_HEADERS_ALL, by ORDERED_DATE,
 --                         BU = ORG_ID. One per order: revisions collapsed to the
---                         submitted version, the exact F4.2 rule. All orders,
---                         returns included (EBS 6.1 has no category filter).
+--                         submitted version, the F4.2 collapse rule. All orders,
+--                         returns included (EBS 6.1 has no category filter),
+--                         drafts included (F4.2 v1.3 leaves drafts out).
 --    2 Purchase Orders    PO_HEADERS_ALL, TYPE_LOOKUP_CODE = 'STANDARD', not
 --                         cancelled, by CREATION_DATE; in scope when the
 --                         procurement, requisitioning or bill-to BU is (F4.1 rule).
@@ -62,12 +63,18 @@
 --    * POs: the extra "sourced from a requisition" filter is removed (not in
 --      EBS 6.1). Orders: revision rows no longer counted as extra orders.
 --  Reconciles (enter the dates, so F6.1 and F4.x cover the same months; with
---  blank dates F6.1 covers 6 months and F4.x 90 days): Sales Orders + RMA in F4.2
---  = chart 1 total; F4.1 AP invoices = chart 5 total; F4.3 journals = chart 6
---  total (F4.1 POs count BLANKET / PLANNED too, so chart 2 is a subset).
+--  blank dates F6.1 covers 6 months and F4.x all history): F4.2 v1.3 Sales
+--  Orders (submitted, RMAs included) + the never-submitted orders of those
+--  months (V4_3 rows 3 + 5) = chart 1 total; F4.1 AP invoices = chart 5
+--  total; F4.3 journals = chart 6 total (F4.1 POs count BLANKET / PLANNED
+--  too, so chart 2 is a subset).
 -- ============================================================================
 WITH
 -- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.1).
+--      F6.1 KEEPS the v3.1 win block on purpose. v3.2 (2026-10-13) makes a
+--      blank to-date open-ended (9999-12-31), which would move chart_win's
+--      6 months to the year 9999. chart_win never reads the 90-day start
+--      when the from-date is blank, so the old default changes nothing here.
 params AS (
     SELECT :p_ledger_id     AS p_ledger_id,
            :p_bu_id         AS p_bu_id,
