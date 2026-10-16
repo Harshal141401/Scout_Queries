@@ -1,7 +1,14 @@
 -- ============================================================================
 --  F5.2  Section 5.2 Custom scheduled processes (Fusion counterpart of the EBS
 --        custom concurrent programs table) + workbook sheet
---  Version   : 1.1 (2026-10-05). Not yet run on a pod.
+--  Version   : 1.2 (2026-10-16). Not yet run on a pod.
+--              v1.2 (user / manager, 2026-10-16): the Scout field "Custom
+--              object prefixes" (:p_custom_prefix, e.g. YEU or YEU% or
+--              XX,XXX) is used again. Blank: the v1.1 rule, unchanged (a job
+--              definition under /oracle/apps/ess/custom/). Set: a job
+--              definition with a folder or name starting with a prefix.
+--              Same rule as F5.1 v2.2 card 1, so the row count = that card.
+--              v1.1 (2026-10-05). Not yet run on a pod.
 --              v1.1 (user, 2026-10-05: "use what Fusion uses"): custom = Fusion's
 --              own marker only, the /oracle/apps/ess/custom/ path. The EBS
 --              prefix (XOR) rule and its block are removed; :p_custom_prefix
@@ -15,8 +22,9 @@
 --              dates as F1 (report window: 2025-04-01 to 2026-03-31). Blank
 --              dates = all history (shared block v3.2, 2026-10-13; was the
 --              last 90 days). The all-time columns ignore the window.
---  Scope     : pod-wide (ESS is a pod service). :p_ledger_id / :p_bu_id /
---              :p_custom_prefix are accepted and not used (parameter parity).
+--  Scope     : pod-wide (ESS is a pod service). :p_ledger_id / :p_bu_id are
+--              accepted and not used (parameter parity); :p_custom_prefix is
+--              USED (v1.2, above).
 --  Output    : the FULL list, one row per custom job definition, ordered by
 --              executions in the period (EBS order). The report shows the
 --              first 10 rows; the workbook
@@ -116,6 +124,30 @@ fa_book_scope AS (
     WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
     GROUP  BY fbc.book_type_code
 ),
+-- ---- CUSTOM OBJECT PREFIXES (Scout field "Custom object prefixes") ----------
+--      Section 5 only (F5.1, F5.2); every other query accepts and ignores it.
+--      :p_custom_prefix = comma-separated prefixes, e.g. 'YEU', 'YEU%' or
+--      'XX,XXX'. Spaces, quotes and the wildcards % and * are dropped and case
+--      is ignored; '_' is literal. Blank = no prefix: the Fusion custom rules
+--      (the /custom/ paths) apply, exactly as before.
+pfx_raw AS (
+    SELECT UPPER(REGEXP_REPLACE(REGEXP_SUBSTR(p.p_custom_prefix, '[^,]+', 1, LEVEL),
+                                '[%*''" ]', ''))                     AS prefix
+    FROM   params p
+    WHERE  p.p_custom_prefix IS NOT NULL
+    CONNECT BY LEVEL <= REGEXP_COUNT(p.p_custom_prefix, '[^,]+')
+),
+pfx AS (
+    SELECT r.prefix
+    FROM   pfx_raw r
+    WHERE  r.prefix IS NOT NULL
+    GROUP  BY r.prefix
+),
+pfx_on AS (
+    SELECT COUNT(*)                                                 AS n_pfx,
+           LISTAGG(x.prefix, ', ') WITHIN GROUP (ORDER BY x.prefix)  AS pfx_list
+    FROM   pfx x
+),
 -- ---- one pass over request history: per job definition, all-time and period
 ess_def AS (
     SELECT erh.definition                                         AS definition,
@@ -155,14 +187,21 @@ ess_def_parsed AS (
            d.last_request_id, d.recorded_name, d.ess_application
     FROM   ess_def d
 ),
--- the custom-job rule (identical in F5.1, F5.2 and V5_1)
+-- the custom-job rule (identical in F5.1 and F5.2; V5_4 has the no-prefix
+-- rule). No prefix: a JobDefinition under /oracle/apps/ess/custom/. A prefix:
+-- a JobDefinition with a folder or name starting with it (v1.2).
 custom_job AS (
     SELECT e.definition, e.job_name, e.job_path,
            e.exec_all, e.last_run_all, e.exec_win, e.first_run_win, e.last_run_win,
            e.last_request_id, e.recorded_name, e.ess_application
     FROM   ess_def_parsed e
-    WHERE  e.def_type    = 'JobDefinition'
-    AND    e.custom_path = 'Y'
+    CROSS  JOIN pfx_on po
+    WHERE  e.def_type = 'JobDefinition'
+    AND    (   (po.n_pfx = 0 AND e.custom_path = 'Y')
+            OR (po.n_pfx > 0
+                AND EXISTS ( SELECT 1
+                             FROM   pfx x
+                             WHERE  INSTR(UPPER(e.definition), '/' || x.prefix) > 0 )))
 ),
 -- the BIP report behind each job: reportID of the latest request.
 -- TO_CHAR(SUBSTR(...)) gives VARCHAR2 whether VALUE is VARCHAR2, NVARCHAR2 or CLOB.

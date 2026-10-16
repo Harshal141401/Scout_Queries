@@ -1,6 +1,15 @@
 -- ============================================================================
 --  F5.1  Section 5.1 CEMLI summary (Fusion) - the 5 finalized cards
---  Version   : 2.1 (2026-10-06). Not yet run on a pod.
+--  Version   : 2.2 (2026-10-16). Not yet run on a pod.
+--              v2.2 (user / manager, 2026-10-16): the Scout field "Custom
+--                object prefixes" (:p_custom_prefix, e.g. YEU or YEU% or
+--                XX,XXX) now drives all five cards. Blank: the v2.1 rules,
+--                unchanged. Set: an object counts only when it matches a
+--                prefix - card 1 a job definition, cards 2-4 a shared-catalog
+--                item, with a folder or name starting with it; card 5 a rule
+--                name starting with it. The notes name the prefixes used.
+--                Section 5 only: no other query reads the prefix.
+--              v2.1 (2026-10-06). Not yet run on a pod.
 --              v2.1 (after R033 / R035 and the user's decision 2026-10-06):
 --                card 3 counts DASHBOARDS, not dashboard pages. The catalog index
 --                holds one Dashboard row per page (R033: custom 339 rows); the
@@ -37,7 +46,8 @@
 --  Mirrors   : the finalized Fusion-to-Fusion 5.1 cards (June draft), which play
 --              the role of EBS 5.1 (agent ebs_discover_cemli).
 --  Window    : SNAPSHOT. The dates are accepted and ignored.
---  Scope     : pod-wide. The five standard binds are accepted for BIP parity.
+--  Scope     : pod-wide. :p_ledger_id / :p_bu_id / the dates are accepted for
+--              BIP parity and ignored; :p_custom_prefix is USED (v2.2, above).
 --
 --  CHANGES AGAINST THE JUNE DRAFT (rules, not cards)
 --    card 1  June: COUNT(DISTINCT DEFINITION) with '/CUSTOM/' anywhere. Now: one
@@ -118,6 +128,30 @@ fa_book_scope AS (
     WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
     GROUP  BY fbc.book_type_code
 ),
+-- ---- CUSTOM OBJECT PREFIXES (Scout field "Custom object prefixes") ----------
+--      Section 5 only (F5.1, F5.2); every other query accepts and ignores it.
+--      :p_custom_prefix = comma-separated prefixes, e.g. 'YEU', 'YEU%' or
+--      'XX,XXX'. Spaces, quotes and the wildcards % and * are dropped and case
+--      is ignored; '_' is literal. Blank = no prefix: the Fusion custom rules
+--      (the /custom/ paths) apply, exactly as before.
+pfx_raw AS (
+    SELECT UPPER(REGEXP_REPLACE(REGEXP_SUBSTR(p.p_custom_prefix, '[^,]+', 1, LEVEL),
+                                '[%*''" ]', ''))                     AS prefix
+    FROM   params p
+    WHERE  p.p_custom_prefix IS NOT NULL
+    CONNECT BY LEVEL <= REGEXP_COUNT(p.p_custom_prefix, '[^,]+')
+),
+pfx AS (
+    SELECT r.prefix
+    FROM   pfx_raw r
+    WHERE  r.prefix IS NOT NULL
+    GROUP  BY r.prefix
+),
+pfx_on AS (
+    SELECT COUNT(*)                                                 AS n_pfx,
+           LISTAGG(x.prefix, ', ') WITHIN GROUP (ORDER BY x.prefix)  AS pfx_list
+    FROM   pfx x
+),
 -- ---- 1 Custom Scheduled Processes (ESS): one row per job definition --------
 ess_def AS (
     SELECT erh.definition AS definition,
@@ -133,12 +167,19 @@ ess_def_parsed AS (
                 THEN 'Y' ELSE 'N' END                                     AS custom_path
     FROM   ess_def d
 ),
--- the custom-job rule (identical in F5.1, F5.2 and V5_4)
+-- the custom-job rule (identical in F5.1 and F5.2; V5_4 has the no-prefix
+-- rule). No prefix: a JobDefinition under /oracle/apps/ess/custom/. A prefix:
+-- a JobDefinition with a folder or name starting with it (v2.2).
 custom_job AS (
     SELECT e.definition
     FROM   ess_def_parsed e
-    WHERE  e.def_type    = 'JobDefinition'
-    AND    e.custom_path = 'Y'
+    CROSS  JOIN pfx_on po
+    WHERE  e.def_type = 'JobDefinition'
+    AND    (   (po.n_pfx = 0 AND e.custom_path = 'Y')
+            OR (po.n_pfx > 0
+                AND EXISTS ( SELECT 1
+                             FROM   pfx x
+                             WHERE  INSTR(UPPER(e.definition), '/' || x.prefix) > 0 )))
 ),
 ess_cnt AS (
     SELECT COUNT(*) AS cnt FROM custom_job
@@ -160,7 +201,14 @@ bi_items AS (
            r.report_path,
            MAX(CASE WHEN r.bip_report_job_definition IS NOT NULL THEN 1 ELSE 0 END) AS has_job
     FROM   gl_frc_reports_b r
-    WHERE  LOWER(r.report_path) LIKE '/shared/custom/%'
+    CROSS  JOIN pfx_on po
+    -- v2.2: no prefix = under /shared/Custom/; a prefix = anywhere in the
+    -- shared catalog, with a folder or name starting with it
+    WHERE  (   (po.n_pfx = 0 AND LOWER(r.report_path) LIKE '/shared/custom/%')
+            OR (po.n_pfx > 0 AND LOWER(r.report_path) LIKE '/shared/%'
+                AND EXISTS ( SELECT 1
+                             FROM   pfx x
+                             WHERE  INSTR(UPPER(r.report_path), '/' || x.prefix) > 0 )))
     GROUP  BY UPPER(r.report_type_code), r.report_path
 ),
 bi_cnt AS (
@@ -186,8 +234,14 @@ bi_dash AS (
                 ELSE REGEXP_REPLACE(REPLACE(r.report_path, '\/', CHR(31)), '/[^/]*$', '')
            END                                                       AS dash_key
     FROM   gl_frc_reports_b r
+    CROSS  JOIN pfx_on po
     WHERE  UPPER(r.report_type_code) = 'DASHBOARD'
-    AND    LOWER(r.report_path) LIKE '/shared/custom/%'
+    -- v2.2: the card 2-4 rule (no prefix / a prefix)
+    AND    (   (po.n_pfx = 0 AND LOWER(r.report_path) LIKE '/shared/custom/%')
+            OR (po.n_pfx > 0 AND LOWER(r.report_path) LIKE '/shared/%'
+                AND EXISTS ( SELECT 1
+                             FROM   pfx x
+                             WHERE  INSTR(UPPER(r.report_path), '/' || x.prefix) > 0 )))
 ),
 bi_dash_grp AS (
     SELECT b.dash_key, COUNT(*) AS n_pages
@@ -199,24 +253,48 @@ bi_dash_cnt AS (
     FROM   bi_dash_grp g
 ),
 -- ---- 5 Workflow / approval rules: active, not the sandbox copy ---------------
+-- v2.2: with a prefix, a rule counts only when its name starts with it
+amx_rows AS (
+    SELECT ar.active_flag,
+           ar.sandbox_flag,
+           ar.display_rule_name,
+           CASE WHEN po.n_pfx = 0 THEN 1
+                WHEN EXISTS ( SELECT 1
+                              FROM   pfx x
+                              WHERE  SUBSTR(UPPER(ar.display_rule_name), 1,
+                                            LENGTH(x.prefix)) = x.prefix )
+                THEN 1 ELSE 0
+           END                                                        AS pfx_ok
+    FROM   por_amx_rules ar
+    CROSS  JOIN pfx_on po
+),
 amx_cnt AS (
     SELECT COUNT(*)                                                   AS n_all,
-           NVL(SUM(CASE WHEN ar.active_flag = 'Y'
-                         AND NVL(ar.sandbox_flag, 'N') <> 'Y'
+           NVL(SUM(CASE WHEN a.active_flag = 'Y'
+                         AND NVL(a.sandbox_flag, 'N') <> 'Y'
+                         AND a.pfx_ok = 1
                         THEN 1 ELSE 0 END), 0)                        AS cnt,
-           NVL(SUM(CASE WHEN ar.active_flag = 'Y'
-                         AND NVL(ar.sandbox_flag, 'N') <> 'Y'
-                         AND ar.display_rule_name LIKE 'SoaOLabel.%'
+           NVL(SUM(CASE WHEN a.active_flag = 'Y'
+                         AND NVL(a.sandbox_flag, 'N') <> 'Y'
+                         AND a.pfx_ok = 1
+                         AND a.display_rule_name LIKE 'SoaOLabel.%'
                         THEN 1 ELSE 0 END), 0)                        AS n_unnamed
-    FROM   por_amx_rules ar
+    FROM   amx_rows a
 ),
 grid AS (
     SELECT 1                                                              AS sort_order,
            CAST('Custom Scheduled Processes (ESS)' AS VARCHAR2(200))      AS category,
            CASE WHEN ea.n_all > 0 THEN ec.cnt END                         AS cnt,
            CAST(CASE WHEN ea.n_all > 0
-                     THEN 'ESS request history: job definitions under /oracle/apps/ess/custom/,'
-                          || ' where Fusion creates every customer job. Floor: ESS keeps history'
+                     THEN CASE WHEN po.n_pfx > 0
+                               THEN 'ESS request history: job definitions with a folder or name'
+                                    || ' starting with ' || po.pfx_list
+                                    || ' (Custom object prefixes).'
+                               ELSE 'ESS request history: job definitions under'
+                                    || ' /oracle/apps/ess/custom/, where Fusion creates every'
+                                    || ' customer job.'
+                          END
+                          || ' Floor: ESS keeps history'
                           || ' only from ' || NVL(TO_CHAR(eh.hist_start, 'YYYY-MM-DD'), '-')
                           || ' on this pod, so a custom job not run since then is not visible.'
                           || ' Listed in 5.2.'
@@ -226,29 +304,40 @@ grid AS (
     FROM   ess_cnt ec
     CROSS  JOIN ess_all ea
     CROSS  JOIN ess_hist eh
+    CROSS  JOIN pfx_on po
     UNION ALL
     SELECT 2, TO_CHAR('Custom BIP Reports'),
            CASE WHEN bt.n_all > 0 THEN bc.n_bip END,
            TO_CHAR(CASE WHEN bt.n_all > 0
-                        THEN 'BI catalog (GL_FRC_REPORTS_B): BI Publisher reports under /shared/Custom/.'
+                        THEN 'BI catalog (GL_FRC_REPORTS_B): BI Publisher reports '
+                             || CASE WHEN po.n_pfx > 0
+                                     THEN 'in the shared catalog with a folder or name starting'
+                                          || ' with ' || po.pfx_list || ' (Custom object prefixes).'
+                                     ELSE 'under /shared/Custom/.' END
                         ELSE 'Not measured: GL_FRC_REPORTS_B returns no rows to this report user,'
                              || ' so a 0 here would be false.'
                    END)
     FROM   bi_cnt bc
     CROSS  JOIN bi_tot bt
+    CROSS  JOIN pfx_on po
     UNION ALL
     SELECT 3, TO_CHAR('Custom OTBI Reports'),
            CASE WHEN bt.n_all > 0 THEN bc.n_analysis + dc.n_dash END,
            TO_CHAR(CASE WHEN bt.n_all > 0
                         THEN 'BI catalog (GL_FRC_REPORTS_B): OTBI analyses (' || bc.n_analysis
                              || ') and dashboards (' || dc.n_dash || ', holding ' || dc.n_pages
-                             || ' pages) under /shared/Custom/.'
+                             || ' pages) '
+                             || CASE WHEN po.n_pfx > 0
+                                     THEN 'in the shared catalog with a folder or name starting'
+                                          || ' with ' || po.pfx_list || ' (Custom object prefixes).'
+                                     ELSE 'under /shared/Custom/.' END
                         ELSE 'Not measured: GL_FRC_REPORTS_B returns no rows to this report user,'
                              || ' so a 0 here would be false.'
                    END)
     FROM   bi_cnt bc
     CROSS  JOIN bi_dash_cnt dc
     CROSS  JOIN bi_tot bt
+    CROSS  JOIN pfx_on po
     UNION ALL
     SELECT 4, TO_CHAR('Custom BIP Templates'),
            CASE WHEN bt.n_all > 0 THEN bc.n_bip_job END,
@@ -265,13 +354,18 @@ grid AS (
     SELECT 5, TO_CHAR('Workflow / Approval Rule Customizations'),
            CASE WHEN ax.n_all > 0 THEN ax.cnt END,
            TO_CHAR(CASE WHEN ax.n_all > 0
-                        THEN 'POR_AMX_RULES: active procurement approval rules, the sandbox copy of'
+                        THEN 'POR_AMX_RULES: active procurement approval rules'
+                             || CASE WHEN po.n_pfx > 0
+                                     THEN ' named with ' || po.pfx_list
+                                          || ' (Custom object prefixes)' END
+                             || ', the sandbox copy of'
                              || ' each rule excluded; ' || ax.n_unnamed
                              || ' of them are unnamed default rules (SoaOLabel.EmptyRule...).'
                         ELSE 'Not measured: POR_AMX_RULES returns no rows to this report user,'
                              || ' so a 0 here would be false.'
                    END)
     FROM   amx_cnt ax
+    CROSS  JOIN pfx_on po
 )
 SELECT
     g.category                                                AS "CEMLI Category",
