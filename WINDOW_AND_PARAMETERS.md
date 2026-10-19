@@ -11,12 +11,15 @@
 
 **Date rules**
 - The format is `YYYY-MM-DD`.
-- If the dates are left blank, the windowed queries fall back to the **last 90 days up to today** (`TRUNC(SYSDATE) - 90`). That is *not* the discovery window.
-- Every windowed query shares one identical window block (copied from F1), so the same two dates give the same period everywhere.
+- If the dates are left blank, the windowed queries use **all history** (shared block v3.2, user 2026-10-13). A blank from-date has no lower bound, and a blank to-date has no upper bound. That is *not* the discovery window. Until 2026-10-13 the fallback was the last 90 days up to today.
+- Every windowed query shares one identical window block (copied from F1), so the same two dates give the same period everywhere. **F6.1 keeps the v3.1 block** on purpose: its chart needs a real to-date (see its row below). With dates entered it gives the same period as the others.
+- Blank dates do **not** open these windows, because they are not set by the date parameters: F6.1's 6-month chart, the Section 8 use windows (6 months / 3 months from the run day) and the Section 10 load rows (the last 90 days from the run moment).
 
 **Ledger and BU** (`p_ledger_id`, `p_bu_id`)
 - Use the same values across every query of one report run.
 - Blank means the whole pod.
+- **A BU narrows everything that can belong to it** (shared block v3.3, manager feedback 2026-10-16). BU modules (AP, AR, PO, OM, CE, projects, expenses, leases) narrow to the BU itself. GL, costing and assets narrow to the BU's primary ledger. Inventory, shipping, manufacturing and BOM narrow to the BU's inventory orgs (`INV_ORGANIZATION_DEFINITIONS_V.BUSINESS_UNIT_ID`). A blank BU behaves exactly as before.
+- **What a BU cannot narrow:** anything owned by the ledger is shared by every BU on it, so with one ledger, GL, costing and asset counts stay the same for any BU. Global setup (GL journal sources and categories, item templates, cost books) has no owner. AR payment terms, transaction types and sources belong to reference data sets, not BUs: `V3_2` shows what they would be for a BU before F3.1 rows 2-4 change.
 
 ---
 
@@ -35,9 +38,11 @@
 | 4.3 workbook | `F4.3_WB_GL_Journal_Sources` | Same population as F4.3 |
 | 5.2 + workbook | `F5.2_Custom_Scheduled_Processes` | Executions (period), first / last run in the period (ESS start time, `PROCESSSTART`). The all-time columns ignore the window, as in EBS. |
 | 5.2 caption | `F5.2_ESS_History_Coverage` | Only says whether the period is inside retained ESS history (Full / Partial / None). Use the same dates as F5.2. |
-| 6.1 | `F6.1_Data_Volume_Trends` | **The last 6 months of the window**, by calendar month: 2025-04-01 / 2026-03-31 gives Oct-25 → Mar-26. Never before the entered from-date. **Exception to the 90-day default (user, 2026-10-05):** with the from-date blank, the chart is the 6 months ending in the to-date month (to-date blank = today, so the current month is partial). Each chart uses its own business date (ordered, creation, transaction or invoice date). |
+| 6.1 | `F6.1_Data_Volume_Trends` | **The last 6 months of the window**, by calendar month: 2025-04-01 / 2026-03-31 gives Oct-25 → Mar-26. Never before the entered from-date. **Exception to the blank-date default (user, 2026-10-05):** with the from-date blank, the chart is the 6 months ending in the to-date month (to-date blank = today, so the current month is partial). Each chart uses its own business date (ordered, creation, transaction or invoice date). |
 | Check | `V0_3_Explain_Executive_Summary` | Same window as F0 |
-| Check | `V1_1_Module_Activity_Evidence` | Same window as F1, plus 12 months of history ending with the window |
+| Check | `V1_1_Module_Activity_Evidence` | Same window as F1, plus 12 months of history ending with the window (blank dates: every row) |
+| Check | `V4_3_O2C_Reconciliation_Section_4_2` | Same window as F4.2 |
+| Check | `V4_4_P2P_Reconciliation_Section_4_1` | Same window as F4.1 |
 
 ### Operational window from the run day (dates accepted but ignored)
 
@@ -71,7 +76,7 @@ These measure use of the system, which is operational history, not a business da
 | 7.1 | `F7.1_Open_Transactions`, `F7.1_WB_Open_Transactions_By_BU` (open as of the run day; no window, as in EBS) |
 | 9.1 | `F9.1_Security_Footprint` (pod-wide; the binds are accepted and ignored) |
 | 10.1 / 10.2 / 10.3 | `F10.1_Release_and_Update_Level`, `F10.2_Database_and_Infrastructure` rows 1–10, `F10.3_Fusion_Pod_Posture` (pod-wide; the binds are accepted and ignored) |
-| Checks | `V0_0`, `V0_1`, `V0_2`, `V1_2`, `V3_0`, `V3_1`, `V4_0`, `V4_1`, `V5_0`, `V5_1`, `V5_2a`, `V5_2b`, `V5_3`, `V5_4`, `V5_5`, `V6_0`, `V6_1`, `V6_2`, `V7_0`, `V7_1`, `V8_0`, `V9_1`, `V10_0`, `V10_2a`–`V10_2f` |
+| Checks | `V0_0`, `V0_1`, `V0_2`, `V1_2`, `V3_0`, `V3_1`, `V4_0`, `V4_1`, `V4_2`, `V5_0`, `V5_1`, `V5_2a`, `V5_2b`, `V5_3`, `V5_4`, `V5_5`, `V6_0`, `V6_1`, `V6_2`, `V7_0`, `V7_1`, `V8_0`, `V9_1`, `V10_0`, `V10_2a`–`V10_2f` |
 
 **All-time on purpose (EBS rule):**
 - `JOURNALS_POSTED` on the GL Journal Sources and GL Journal Categories sheets (`F3.1_WB_Setup_03` / `_04`)
@@ -79,8 +84,12 @@ These measure use of the system, which is operational history, not a business da
 
 These answer "defined vs ever used", not "used in the window".
 
-**`p_custom_prefix`** is accepted everywhere and **used nowhere** since F5.1 / F5.2 v1.1 (2026-10-05).
-- Section 5 identifies custom objects by Fusion's own markers: the `/oracle/apps/ess/custom/` path, the `/shared/Custom/` catalog folder, the `ORA_` role prefix, and "created by a user account".
+**`p_custom_prefix`** (the Scout field "Custom object prefixes") is accepted everywhere and **used by Section 5 only**: F5.1 v2.2 and F5.2 v1.2 (2026-10-16). No other query reads it, so a prefix changes Section 5 and nothing else.
+- **Format:** comma-separated prefixes, e.g. `YEU`, `YEU%` or `XX,XXX`. Spaces, quotes and the wildcards `%` / `*` are dropped, case is ignored, `_` is literal.
+- **Blank:** Fusion's own markers, as before: the `/oracle/apps/ess/custom/` path (ESS jobs) and the `/shared/Custom/` catalog folder (BIP / OTBI).
+- **Set:** an object counts only when it matches a prefix: an ESS job definition, or a shared-catalog item, with a folder or name starting with it (F5.1 cards 1-4, F5.2); an approval rule whose name starts with it (card 5).
+- The 5.1 and 5.2 data models must define a text parameter `p_custom_prefix` for BIP to pass it.
+- Section 8 (F8.2 custom reports) does not read it, so with a prefix set its custom-report counts can differ from F5.1 cards 2-3.
 - V5_1 block D still prints the job-naming convention the client uses, for the migration document.
 
 ---

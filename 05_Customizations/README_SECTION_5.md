@@ -8,9 +8,9 @@ Pod runs: R016–R019 in `06_Run_Results/RUN_LOG.md`.
 
 | Report item | File | Version | Status |
 |---|---|---|---|
-| **5.1** CEMLI summary (5 cards) | `F5.1_Extensions_Summary.sql` | **2.1** (2026-10-06) | Not run. Card 3 counts dashboards (35 + 57 = 92); card 1 note gives the ESS history start. Expected 2 · 196 · 92 · 106 · 36. |
-| **5.2** Custom scheduled processes (report: first 10 rows) + workbook WB7 (all rows) | `F5.2_Custom_Scheduled_Processes.sql` | 1.1 | ⚠ PROCESSSTART proven (R035), but **ESS history starts 2026-09-21: no coverage for the discovery window (C73)**. Decide before running. |
-| **5.2** caption: how far back ESS history goes | `F5.2_ESS_History_Coverage.sql` | 1.0 | as above |
+| **5.1** CEMLI summary (5 cards) | `F5.1_Extensions_Summary.sql` | **2.2** (2026-10-16) | Not run. v2.2: the Custom object prefixes (`p_custom_prefix`, e.g. YEU%) drive all five cards; blank = the v2.1 rules. Card 3 counts dashboards (35 + 57 = 92); card 1 note gives the ESS history start. Expected 2 · 196 · 92 · 106 · 36. |
+| **5.2** Custom scheduled processes (report: first 10 rows) + workbook WB7 (all rows) | `F5.2_Custom_Scheduled_Processes.sql` | 1.2 (prefix) | ⚠ PROCESSSTART proven (R035), but **ESS history starts 2026-09-21: no coverage for the discovery window (C73)**. Decide before running. |
+| **5.2** caption: how far back ESS history goes | `F5.2_ESS_History_Coverage.sql` | 1.1 | as above |
 
 ## The five cards
 

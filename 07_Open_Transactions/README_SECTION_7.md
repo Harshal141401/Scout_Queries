@@ -1,40 +1,100 @@
-# Section 7: Open transactions snapshot (built 2026-10-05; v1.3 = 10 rows; checks R023-R030 all pass; F7.1 not yet run)
+# Section 7: Open transactions snapshot (built 2026-10-05; v1.4 = 10 rows, a Value on 8 of them; checks R023-R030 all pass; F7.1 v1.3 ran 2026-10-12 as R041; V7_0 v1.4 / V7_2 ran as R042 / R043, all OK; F7.1 v1.4 not run)
+
+> **R041 (2026-10-12, v1.3):** 4 · 864 · 212 · 628 / 22,349,328.67 · 0 · 6,973 · 641 / 25,157,042.57 · 10 / 33,636.61 · 4,509 · 133. Six rows equal the expected values. Rows 3, 6, 7 and 10 differ by a net one document, 7 days after the baseline. **The seven blank values are by design**: EBS publishes money only on open AP invoices, open AR invoices and open or unapplied receipts (agent `OPEN_TXN_METRICS`, EBS v3 `has_value`, EBS report Appendix A). The EBS report prints "—" there. One option for the user: the EBS v3 SQL values those three rows in ledger currency; the agent and the report use entered currency, as F7.1 does.
+
+> **v1.4 (2026-10-12, after R041):** Satyajit asked for the total unpaid amount on the rows that were count-only. F7.1 and the workbook now print a Value on rows 1, 2, 3, 5 and 6 as well: the amount **not yet settled by the next document** (see [The values (v1.4)](#the-values-v14-2026-10-12)). The counts do not change. Rows 9 and 10 stay count-only. Run order: **V7_0 v1.4 → V7_2 v1.0 → F7.1 v1.4 → F7.1_WB v1.4**, on the same day and with the same ledger / BU.
+
+> **R042 / R043 / R044 (2026-10-12):** V7_0 v1.4 19 / 19 ALL OK. V7_2: all five ties OK, counts = R041, and the rules hold (C89, C90 closed, no v1.5). **F7.1 v1.4 will print:** 4 / 41,324.41 · 864 / 40,605,056.30 · 212 / 1,529,309.74 · 628 / 22,349,328.67 · 0 / 0 · 6,973 / 229,302,762.82 · 641 / 25,157,042.57 · 10 / 33,636.61 · 4,509 · 133. R044 was the GitHub folder's stale v1.3 copy of F7.1 (counts equal, values on 4 / 7 / 8 only), so **F7.1 v1.4 still has to run**, then the workbook and V7_2 v1.1 (C91).
 
 This is the Fusion version of the EBS report's Section 7.1. The section has two parts:
-- An 8-row summary table.
+- A 10-row summary table.
 - A by-business-unit workbook (WB8).
 
-Both are ported from the EBS agent's `ebs_discover_open_transactions`, the final logic, which matches the 30-Sep-2026 report. The June draft `02_SQL_Existing/07_Open_Transactions/16_S7.1_Open_Transactions.sql` was a starting point only; the changes from it are listed below.
+Both are ported from the EBS agent's `ebs_discover_open_transactions`, the final logic, which matches the 30-Sep-2026 report. The June draft `02_SQL_Existing/07_Open_Transactions/16_S7.1_Open_Transactions.sql` was a starting point only; the changes from it are listed below. v1.4 goes beyond EBS on one point, at Satyajit's request: a Value on rows 1, 2, 3, 5 and 6 (EBS shows money on rows 4, 7 and 8 only).
 
 ## Deliverables
 
 | Report item | File | Window | Status |
 |---|---|---|---|
-| **7.1** Open transactions summary (10 rows: Open Item / Count / Value) | `F7.1_Open_Transactions.sql` **v1.3** | **None.** Snapshot of the run day; dates are ignored. | Not run. Expected values: C52 below |
-| **WB8** `Fusion_Discovery_7_1_Open_Transactions_By_BU.xlsx` (Business Unit × 10 classes, zeros included) | `F7.1_WB_Open_Transactions_By_BU.sql` **v1.3** | None | Not run (3 BUs = 30 rows) |
-| Column check | `../00_Verify_First/V7_0_Columns_Check_Section_7.sql` **v1.3** (18 objects / 88 columns) | none | ✅ R023 (v1.0), R025 (v1.2) and R029 all ALL OK. R029 cannot show its own version: V7_0 never prints its need list. The 3 columns v1.3 added are proven by R030, which reads them. |
-| Status codes + sanity | `../00_Verify_First/V7_1_Code_Values_Section_7.sql` **v1.3** | none | ✅ R030 (v1.3): row 1 = **4**, no consigned stock. R024 (v1.0) and R026 (v1.2) each found a row 1 defect, both fixed. |
+| **7.1** Open transactions summary (10 rows: Open Item / Count / Value) | `F7.1_Open_Transactions.sql` **v1.4** | **None.** Snapshot of the run day; dates are ignored. | v1.3 ran as R041 and R044 (R044 = the GitHub folder's stale copy). **v1.4 not run**; it will print R043 block A |
+| **WB8** `Fusion_Discovery_7_1_Open_Transactions_By_BU.xlsx` (Business Unit × 10 classes, zeros included) | `F7.1_WB_Open_Transactions_By_BU.sql` **v1.4** | None | Not run (3 BUs = 30 rows) |
+| Column check | `../00_Verify_First/V7_0_Columns_Check_Section_7.sql` **v1.4** (19 objects / 112 columns) | none | ✅ **R042 (v1.4): 19 / 19 ALL OK**, incl. DOO_FULFILL_LINES_ALL; it also covers V7_2 v1.1 (identical need list). Earlier: R023 (v1.0), R025 (v1.2) and R029 all ALL OK. |
+| Status codes + sanity | `../00_Verify_First/V7_1_Code_Values_Section_7.sql` **v1.3** | none | ✅ R030 (v1.3): row 1 = **4**, no consigned stock. **No re-run for v1.4**: the counts do not change. R024 (v1.0) and R026 (v1.2) each found a row 1 defect, both fixed. |
+| Count defence (new) | `../00_Verify_First/V7_3_Open_Transactions_Reconciliation_Section_7.sql` v1.0 | none | Not run. Every document of each row's table with one reason (counted, or the first F7.1 test it fails), by status, with the latest three document numbers per group. Rows k001 must equal the F7.1 run. |
+| Open sales orders (new) | `../00_Verify_First/V7_4_Open_Sales_Orders_Check_Section_7.sql` v1.0 | none | Not run. Row 6 only, order by order: row 1 = F7.1 row 6; row 2 = submitted only (the consultant rule, as F4.2 v1.3); by status, line state, BU, year, returns, source system. |
+| Value check (new) | `../00_Verify_First/V7_2_Open_Amounts_Check_Section_7.sql` **v1.1** | none | ✅ **R043 (v1.0):** all five ties OK; C89 / C90 closed. **v1.1 not run:** adds D2 (is row 3 inside row 2?) and F5 (the share of row 6 from orders never submitted), C91 |
 
-**Run order:** V7_0 v1.3 and V7_1 v1.3 are done (R029 / R030). **Next: F7.1 v1.3 → F7.1_WB v1.3**, with blank parameters, to compare with the expected values below. Use the same ledger / BU for F7.1 and the workbook. Blank ledger / BU = the whole pod (3 BUs, one primary ledger 300000004500337).
+**Run order (v1.4):** ~~V7_0 v1.4~~ (R042) → ~~V7_2 v1.0~~ (R043) → **F7.1 v1.4 → F7.1_WB v1.4 → V7_2 v1.1**, all on the same day and with the same ledger / BU. Blank ledger / BU = the whole pod (3 BUs, one primary ledger 300000004500337). No dates. V7_1 v1.3 (R030) needs no re-run. Copy F7.1 from this folder (or the refreshed GitHub-folder copy); its header must read `Version : 1.4`.
 
-The open-item block is **byte-identical** in F7.1 and the workbook. For the same parameters, each class summed over the workbook's BU rows must equal that F7.1 row, for both Count and Value. If a class rule ever changes, change both files.
+The open-item block (v1.4) is **byte-identical** in F7.1, the workbook and V7_2. For the same parameters, each class summed over the workbook's BU rows must equal that F7.1 row, for both Count and Value. If a class rule ever changes, change all three files.
 
 ## The 10 classes
 
 | # | Open item | Fusion source and rule | BU column | Value |
 |---|---|---|---|---|
-| 1 | Open requisitions | Approved requisitions (`DOCUMENT_STATUS = 'APPROVED'`) with at least one **approved line** (`LINE_STATUS = 'APPROVED'`) that is **on no order**: no PO (`PO_HEADER_ID`) and no transfer order (`TO_HEADER_ID`); Oracle indexes the pair as `NVL(TO_HEADER_ID, PO_HEADER_ID)`. v1.1 after R024; transfer orders v1.3 after R026. | REQ_BU_ID | — |
-| 2 | Open purchase orders | STANDARD POs, not cancelled, approved (`APPROVED_FLAG = 'Y'`), DOCUMENT_STATUS not CLOSED / FINALLY CLOSED / CANCELED | procurement BU, else requisitioning BU, else bill-to BU (the first one in scope) | — |
-| 3 | Open PO receipts | PO schedules with quantity received > quantity billed, not cancelled, SCHEDULE_STATUS not CLOSED / FINALLY CLOSED / CANCELED. Counted per schedule. | the PO's BU (as row 2) | — |
+| 1 | Open requisitions | Approved requisitions (`DOCUMENT_STATUS = 'APPROVED'`) with at least one **approved line** (`LINE_STATUS = 'APPROVED'`) that is **on no order**: no PO (`PO_HEADER_ID`) and no transfer order (`TO_HEADER_ID`); Oracle indexes the pair as `NVL(TO_HEADER_ID, PO_HEADER_ID)`. v1.1 after R024; transfer orders v1.3 after R026. | REQ_BU_ID | v1.4: those open lines |
+| 2 | Open purchase orders | STANDARD POs, not cancelled, approved (`APPROVED_FLAG = 'Y'`), DOCUMENT_STATUS not CLOSED / FINALLY CLOSED / CANCELED | procurement BU, else requisitioning BU, else bill-to BU (the first one in scope) | v1.4: amount not yet invoiced |
+| 3 | Open PO receipts | PO schedules with quantity received > quantity billed, not cancelled, SCHEDULE_STATUS not CLOSED / FINALLY CLOSED / CANCELED. Counted per schedule. | the PO's BU (as row 2) | v1.4: received, not yet invoiced |
 | 4 | Open Payables invoices | Not cancelled, PAYMENT_STATUS_FLAG N or P, every invoice type | ORG_ID | invoice amount − amount paid |
-| 5 | Open prepayments | PREPAYMENT invoices, not cancelled, never applied to an invoice (no distribution points back through PREPAY_DISTRIBUTION_ID) | ORG_ID | — |
-| 6 | Open sales orders | One per order (revisions collapsed, the F4.2 rule). OPEN_FLAG Y and CANCELED_FLAG not Y on that version. | ORG_ID | — |
+| 5 | Open prepayments | PREPAYMENT invoices, not cancelled, never applied to an invoice (no distribution points back through PREPAY_DISTRIBUTION_ID) | ORG_ID | v1.4: prepayment amount |
+| 6 | Open sales orders | One per order (revisions collapsed, the F4.2 rule). OPEN_FLAG Y and CANCELED_FLAG not Y on that version. | ORG_ID | v1.4: open lines not yet sent to billing |
 | 7 | Open Receivables invoices | Payment schedules STATUS OP, CLASS INV, one row per transaction | transaction ORG_ID | amount due remaining |
 | 8 | Open or unapplied receipts | Payment schedules STATUS OP, CLASS PMT, receipt not reversed, one row per receipt | receipt ORG_ID | size of each receipt's open amount |
 | 9 | On-hand inventory (item-org) | INV_ONHAND_QUANTITIES_DETAIL: one row per (inventory org, item) whose stock layers net to more than zero in the primary unit. Consigned stock counts, as in EBS; negative pairs don't (a clean-up item; 0 on this pod). Added v1.2, as EBS v3 class 9. | the inventory org's BU | — |
 | 10 | Open work orders | WIE_WORK_ORDERS_B whose status rolls up to system status **Released** or **On Hold** (WIE_WO_STATUSES_B.WO_SYSTEM_STATUS_CODE). Unreleased and Completed are not counted, as in EBS. Every work order type counts, maintenance included. Added v1.2, as EBS v3 class 10. | the inventory org's BU | — |
 
-Values are in **entered currency**, as in EBS. Amounts in different currencies are added together; V7_1 D2 / F3 show the currency mix. A "—" Value means the row is count-only; it never means zero.
+Values are in **entered currency** (each document's own), as in EBS. Amounts in different currencies are added together; V7_1 D2 / F3 and V7_2 B1 / C3 / F4 show the currency mix. Since v1.4 only rows 9 and 10 print "—": count-only, never zero.
+
+## The values (v1.4, 2026-10-12)
+
+**Why:** after R041 the user passed on Satyajit's request: the tables behind sales orders, POs and the other rows hold amounts, so show the total amount still unpaid on every row, not only on Payables, Receivables and receipts.
+
+**Rule:** each value is the amount **not yet settled by the next document** in the flow. Once the next document exists, the amount belongs to the next row. A PO amount that has been invoiced is in row 4 (while unpaid), not row 2. An order line sent to billing is in row 7, not row 6. So the same money does not appear before and after its invoice.
+
+| # | Open item | Value (v1.4) | Fusion columns |
+|---|---|---|---|
+| 1 | Open requisitions | The open lines (the ones that make the requisition open). Amount-based (services) line: its amount. Quantity line: (quantity − quantity cancelled) × unit price. | POR_REQUISITION_LINES_ALL: MATCHING_BASIS, CURRENCY_AMOUNT / AMOUNT, QUANTITY, QUANTITY_CANCELLED, CURRENCY_UNIT_PRICE / UNIT_PRICE. The CURRENCY_ columns hold the line's own currency when it is not the ledger currency (doc 25D), so they are preferred. |
+| 2 | Open purchase orders | Amount not yet invoiced, over the PO's schedules that are not closed or cancelled. Quantity basis: (quantity − billed − cancelled) × price. Amount basis: amount − billed − cancelled. A schedule billed above its order counts 0, never negative. | PO_LINE_LOCATIONS_ALL: MATCHING_BASIS, QUANTITY, QUANTITY_BILLED, QUANTITY_CANCELLED, PRICE_OVERRIDE, AMOUNT, AMOUNT_BILLED, AMOUNT_CANCELLED, SCHEDULE_STATUS |
+| 3 | Open PO receipts | Received, not yet invoiced: (quantity received − quantity billed) × price. **It is the received part of row 2.** | PO_LINE_LOCATIONS_ALL: QUANTITY_RECEIVED, QUANTITY_BILLED, PRICE_OVERRIDE |
+| 4 | Open Payables invoices | Unchanged: invoice amount − amount paid | AP_INVOICES_ALL |
+| 5 | Open prepayments | The prepayment amount (never applied, so all of it is still to recover). An unpaid prepayment is also in row 4, as its count already is. V7_2 E prints PREPAY_AMOUNT_REMAINING beside it. The pod has no prepayments (R024). | AP_INVOICES_ALL.INVOICE_AMOUNT |
+| 6 | Open sales orders | Order lines not yet sent to billing: EXTENDED_AMOUNT of the fulfillment lines that are open, not cancelled and not invoice-interfaced, on the order version row 6 counts | DOO_FULFILL_LINES_ALL: HEADER_ID, OPEN_FLAG, CANCELED_FLAG, INVOICE_INTERFACED_FLAG, EXTENDED_AMOUNT ("monetary amount for the fulfill line quantity", doc 25C) |
+| 7 | Open Receivables invoices | Unchanged: amount due remaining | AR_PAYMENT_SCHEDULES_ALL |
+| 8 | Open or unapplied receipts | Unchanged: the size of each receipt's open amount | AR_PAYMENT_SCHEDULES_ALL |
+| 9, 10 | On-hand, work orders | Still count-only. Stock and work orders are not unpaid documents; a value would need item costs, which this section has never measured. | — |
+
+**Never add up the Value column:**
+- Rows 2 and 3 overlap: row 3 is the received part of row 2.
+- An unpaid prepayment is in rows 4 and 5.
+- The amounts mix currencies, as rows 4, 7 and 8 always did.
+
+**What V7_2 had to show before the values are published (C87-C90; all met in R042 / R043, below):**
+- Every block's first line says **OK ties**: the F7.1 value adds up from its documents. The ties follow from using the same rule at another grain, so they prove that no join counts a document twice. They do not prove the rule right; the splits are for that.
+- Row 2 (C2): how much of the open amount sits on CLOSED FOR INVOICING schedules, and on schedule types other than STANDARD; schedules billed above their order; schedules with no price.
+- Row 6 (F0, F2): open orders with no fulfillment line (value 0); RETURN lines (if they carry positive amounts, they add to the value instead of reducing it, and v1.5 must net them); lines with no amount.
+- Row 1 (B1): lines with no price (value 0); lines whose AMOUNT differs from quantity × price.
+- Block A: the counts equal R041 (v1.3, the same day), unless documents changed during the day.
+
+## What R042 / R043 found (V7_0 v1.4, V7_2 v1.0; 2026-10-12)
+
+- **V7_0 v1.4: 19 / 19 ALL OK** (C87). DOO_FULFILL_LINES_ALL is visible with all 6 needed columns.
+- **V7_2: all five ties OK, and the counts equal R041** (C88). F7.1 v1.3, run 2.5 minutes later from the GitHub folder (R044), gave the same counts, so the v1.4 rewrite changes no count.
+- **Requisitions (row 1):** 6 open lines, all quantity-based, USD and priced: **41,324.41**.
+- **Purchase orders (row 2), C89 closed:**
+  - **40,605,056.30** not yet invoiced on 1,359 open schedules of the 864 POs.
+  - Every schedule on the pod is type STANDARD and quantity-based (no services schedules, no other types).
+  - Open = ordered − billed exactly (45,233,301.78 − 4,628,245.48): no cancelled quantities, nothing billed above its order on a counted schedule.
+  - CLOSED FOR INVOICING (37 schedules) adds **0.00**: fully billed. CLOSED FOR RECEIVING (195) holds 522,546.42, received and waiting for invoices. ON HOLD (7) 9,007.56. OPEN (1,120) 40,073,502.32.
+  - EUR 52,113.32 (0.13%). The June draft's "everything ordered" would have given 57,228,282.61.
+- **PO receipts (row 3):** 212 schedules, **1,529,309.74**, all quantity-based and priced. That row 3 lies inside row 2 is still an assumption → V7_2 v1.1 D2.
+- **Prepayments (row 5):** none.
+- **Sales orders (row 6), C90 closed:**
+  - **229,302,762.82** on 3,212 open lines of 1,594 orders: 3,181 order lines (229,341,480.04) and **31 return lines (−38,717.22)**. Returns are stored negative, so the value is already net of open returns.
+  - 73 open orders have no fulfillment line (value 0); 23 open order lines have no amount yet (count as 0).
+  - 3 open lines already sent to billing are left out (116.32 and −6,804.00; their amount is in Receivables).
+  - The whole value of the open orders (every line not cancelled) is 527,711,048.88; 304,459,037.07 of it is lines already billed and closed.
+  - EUR 24,757.20 (0.01%).
+  - **Drafts:** the counted version was never submitted for 1,077 orders, and at least 1,004 of them have fulfillment lines (6,900 orders have lines; 5,896 are submitted). Their open lines are inside the 229.3 M. How much → V7_2 v1.1 F5 (C91).
 
 ## What R025 / R026 found (V7_0 / V7_1 v1.2)
 
@@ -143,21 +203,30 @@ The differences:
 - **Requisitions:**
   - Draft: PRC_BU_ID (the emergency-PO BU) and in-process statuses.
   - Now: REQ_BU_ID and approved requisitions only.
-- **POs:** approval is now tested, and the made-up value (line amounts) is removed. The row is count-only, as in EBS.
-- **Sales orders:** the draft counted every revision row and valued them at summed unit prices. It now counts one row per order, count only.
+- **POs:** approval is now tested, and the made-up value (line amounts) is removed. v1.0-v1.3 were count-only, as in EBS. v1.4 adds a value again, but it is the amount not yet invoiced on open schedules, not the draft's total of line amounts.
+- **Sales orders:** the draft counted every revision row and valued them at summed unit prices. It now counts one row per order. v1.4 values it at its open lines not yet sent to billing.
 - **Scope:** a single mandatory `:p_ledger_id` → the shared optional block.
 - **Output:** a formatted text value with a non-ASCII dash → numeric columns.
 
 ## Captions for the report (Fusion wording of the EBS Appendix A, 7.1)
 
-- **Value:** "—" means the row is a count, not a balance; it never means zero. Money is shown only on Open Payables invoices, Open Receivables invoices and Open or unapplied receipts, in entered currency:
-  - Payables: invoice amount − amount paid.
-  - Receivables: amount due remaining.
-  - Receipts: the size of each receipt's open amount.
+- **Value (v1.4):** the amount still open on each row, in each document's own currency. For requisitions, orders and receipts it is the part not yet passed to the next document:
+  - Open requisitions: the open lines (quantity left × price, or the line amount for services).
+  - Open purchase orders: the amount not yet invoiced.
+  - Open PO receipts: the received amount not yet invoiced (part of the open purchase order amount).
+  - Open Payables invoices: invoice amount − amount paid.
+  - Open prepayments: the prepayment amount, none of it applied yet.
+  - Open sales orders: the open order lines not yet sent to billing.
+  - Open Receivables invoices: amount due remaining.
+  - Open or unapplied receipts: the size of each receipt's open amount.
+  - "—" on on-hand inventory and open work orders: a count, not a balance; it never means zero.
+  - Amounts in different currencies are added together. Do not total the column.
 - **Open purchase orders** are approved standard purchase orders that are not closed or cancelled. Purchase agreements are not purchase orders. Fusion has no blanket releases.
 - **Open PO receipts** are PO schedules where the quantity received is more than the quantity billed.
 - **No date window:** "open" is a snapshot.
 - **Open Receivables invoices** count open INV payment schedules, one per transaction after collapsing installments.
+- **Open sales orders (value):** the open order lines not yet sent to billing, net of open return lines; 73 open orders have no lines yet and 23 lines have no price yet (both count as 0). Draft orders never submitted are counted, as EBS counts entered orders; V7_2 v1.1 F5 gives their share of the value.
+- **Open purchase orders (value):** on this pod every schedule is quantity-based; schedules closed for invoicing are fully billed and add nothing.
 
 ## Checks to reconcile (RUN_LOG C48–C57)
 
@@ -165,7 +234,7 @@ The differences:
 |---|---|
 | C48 | V7_0: every row ALL OK, type flags '-'. ✅ R023 |
 | C49 | V7_1: A0 and D0 OK. In blocks B, C, E and F5, no closed or cancelled value is marked counted, and no open value is uncounted. R024: B / C / E / F5 OK; **A failed → fixed in v1.1** (confirm with V7_1 v1.1) |
-| C50 | F7.1 = F7.1_WB summed per class (same parameters), Count and Value, all 10 rows |
+| C50 | F7.1 = F7.1_WB summed per class (same parameters), Count and Value, all 10 rows (Value on rows 1-8 from v1.4) |
 | C51 | V7_1 G: documents whose BU has no primary ledger (dropped even with blank parameters). 0 expected; anything else is stated under the table. ✅ R024: 0 |
 | C52 | F7.1 v1.3 with blank parameters = the expected values above |
 | C53 | PO cancellation read from DOCUMENT_STATUS in F4.1 v1.3 / F6.1 v1.2 (CANCEL_FLAG is never set) |
@@ -173,8 +242,17 @@ The differences:
 | C55 | F7.1 rows 9 / 10 (blank parameters) = V7_1 I0 / J0 = **4,509 / 132**; in block J every Released / On Hold system status is counted Y and every other status N; K2 = 0 / 0 / 0. ✅ checks R026 |
 | C56 | F7.1 v1.3 row 1 = V7_1 v1.3 A2 summary (line open only when on no order: NVL(TO_HEADER_ID, PO_HEADER_ID) empty). ✅ checks R030: **4** |
 | C57 | Consigned on-hand figure from V7_1 v1.3 I3 (OWNING_TYPE value + owner), never from OWNING_TYPE being set. ✅ CLOSED R030: **0** (OWNING_TYPE 2, owner = the org itself, all 6,010 rows) |
+| C87 | V7_0 v1.4: ord 0 reads `V7_0 v1.4 (open-item block v1.4)` and 19 objects / 112 columns needed; every row ALL OK, type flags '-', DOO_FULFILL_LINES_ALL included. ✅ CLOSED R042 |
+| C88 | V7_2: B0 / C0 / D0 / E0 / F0 all **OK ties**; block A counts = R041 (v1.3, same day) unless documents changed; then F7.1 v1.4 = V7_2 block A. ✅ ties and counts R043; F7.1 v1.4 run pending (R044 ran the v1.3 copy) |
+| C89 | Row 2 value (V7_2 C2): the open amount on CLOSED FOR INVOICING schedules and on schedule types other than STANDARD is stated, or taken out in v1.5. ✅ CLOSED R043: 0.00 and none; no v1.5 |
+| C90 | Row 6 value (V7_2 F0 / F2): open orders with no fulfillment line, and the sign of RETURN line amounts. Positive return amounts → v1.5 nets them. ✅ CLOSED R043: returns negative (netted); 73 orders without lines; no v1.5 |
+| C91 | V7_2 v1.1: D2 says **OK inside row 2**, else the row 3 caption changes; F5 states the share of row 6 from orders never submitted |
 
 ## Known limits (stated, not hidden)
+
+- **Values (v1.4) mix currencies**, as rows 4, 7 and 8 always did. Each is the document's own (entered) currency.
+- **Values are line amounts as stored** (PO schedule quantity × price, the order line's EXTENDED_AMOUNT); the query adds no tax or charges.
+- **Row 3 value**, like its count, cannot see amount-based (services) schedules. On this pod there are none (R043: every schedule is quantity-based).
 
 - **Open Payables value** uses invoice amount − amount paid, as in the delivered EBS report. On EBS this was measured against AP's own payment schedules (AP_PAYMENT_SCHEDULES_ALL.AMOUNT_REMAINING): the difference was 0.1% on Vision. Header arithmetic does not net applied prepayments, discounts or withholding.
 - **Services schedules:** a quantity test cannot see amount-based PO schedules. That is the EBS rule; V7_1 C9 counts how many it leaves out.

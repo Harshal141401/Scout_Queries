@@ -2,7 +2,7 @@
 
 This folder holds every query and BIP data model behind the Fusion → Fusion discovery report, sorted by report section.
 - **Nothing in it was rewritten.** The `.sql` and section `README` files are byte copies of the developed set (`02_SQL_Phase2/`, 93 files). The data models are extracted byte for byte from the BIP catalog export `Scout.catalog` (catalog folder `/users/svc/Scout`, 30 data models). Every copy was checked by md5 against its source.
-- This file is the only new document.
+- This file and **`MAPPING.xlsx`** are the only new documents. `MAPPING.xlsx` is a simple one-sheet version for non-technical readers: section, what each item shows, where it is shown, the query file, and the Excel workbook and sheet number.
 
 ## How the folder is organised
 
@@ -23,6 +23,8 @@ This folder holds every query and BIP data model behind the Fusion → Fusion di
 ---
 
 ## 1. Report map: section → query → data model → Excel sheet
+
+> **Shared block v3.2 (2026-10-13): blank dates now mean all history.** Only the `.sql` files have it. Every data model built on the shared block keeps the 90-day default until its file is re-pasted, even where the last column says "Same as the file".
 
 | Section | Report output | Query file | Data model · data set (Scout catalog) | Excel workbook | Sheet | Data model vs file |
 |---|---|---|---|---|---|---|
@@ -51,19 +53,19 @@ This folder holds every query and BIP data model behind the Fusion → Fusion di
 | **3.1** Setup inventory | Excel sheet | [`F3.1_WB_Setup_10_FA_Asset_Books.sql`](03_Configurations/F3.1_WB_Setup_10_FA_Asset_Books.sql) | **Not in the catalog** | **WB4** | **Sheet 10 of 10:** FA Asset Books | No data model yet |
 | **3.2** Descriptive flexfield deep-dive | Report table | [`F3.2_DFF_Deep_Dive.sql`](03_Configurations/F3.2_DFF_Deep_Dive.sql) | `3.2_DFF_Deep_dive.xdm` · DFF_Deep_dive | No | — | Same as the file (v1.0) |
 | **3.2** Descriptive flexfields | Excel sheet | [`F3.2_WB_Descriptive_Flexfields.sql`](03_Configurations/F3.2_WB_Descriptive_Flexfields.sql) | `3.2_DFF_Excel.xdm` · DFF_WB | **WB5** `Fusion_Discovery_3_2_Flexfields.xlsx` | **Sheet 1 of 1:** Descriptive Flexfields | Same code as the file (v1.0); the data model's header comment is shorter |
-| **4.1** Procure-to-pay (P2P) flow | Report table | [`F4.1_P2P_Flow.sql`](04_Business_Processes/F4.1_P2P_Flow.sql) | `4.1_P2P_Flow.xdm` · P2P_flow | No | — | ⚠ **Older:** v1.2 in the data model; the file is **v1.3** (cancelled POs read from DOCUMENT_STATUS) |
-| **4.2** Order-to-cash (O2C) flow | Report table | [`F4.2_O2C_Flow.sql`](04_Business_Processes/F4.2_O2C_Flow.sql) | `4.2_O2C_Flow.xdm` · O2C-Flow | No | — | Same as the file (v1.1) |
-| **4.3** Record-to-report (R2R) | Report table | [`F4.3_R2R.sql`](04_Business_Processes/F4.3_R2R.sql) | `4.3_R2R.xdm` · R2R | No | — | Same as the file (v1.1) |
+| **4.1** Procure-to-pay (P2P) flow | Report table | [`F4.1_P2P_Flow.sql`](04_Business_Processes/F4.1_P2P_Flow.sql) | `4.1_P2P_Flow.xdm` · P2P_flow | No | — | ⚠ **Older:** v1.2 in the data model; the file is **v1.5** (v1.3: cancelled POs read from DOCUMENT_STATUS; v1.4: blank dates = all history; v1.5: PO sub-rows by type) |
+| **4.2** Order-to-cash (O2C) flow | Report table | [`F4.2_O2C_Flow.sql`](04_Business_Processes/F4.2_O2C_Flow.sql) | `4.2_O2C_Flow.xdm` · O2C-Flow | No | — | ⚠ **Older:** v1.1 in the data model; the file is **v1.3** (blank dates = all history; v1.3: the consultant's counting rules, proven by V4_3) |
+| **4.3** Record-to-report (R2R) | Report table | [`F4.3_R2R.sql`](04_Business_Processes/F4.3_R2R.sql) | `4.3_R2R.xdm` · R2R | No | — | ⚠ **Older:** v1.1 in the data model; the file is **v1.2** (blank dates = all history; frequency from the first day read) |
 | **4.3** GL journal sources | Excel sheet | [`F4.3_WB_GL_Journal_Sources.sql`](04_Business_Processes/F4.3_WB_GL_Journal_Sources.sql) | `4.3_Gl_Journal_Sources.xdm` · Gl_journal | **WB6** `Fusion_Discovery_4_3_GL_Journal_Sources.xlsx` | **Sheet 1 of 1:** GL Journal Sources | Same as the file (v1.0) |
 | **4.4** Other process areas | Report table | [`F4.4_Other_Process_Areas.sql`](04_Business_Processes/F4.4_Other_Process_Areas.sql) | `4.4_Other_Process_Areas.xdm` · other_process_areas | No | — | Same as the file (v1.1) |
 | **4.5** Costing method assessment | Report table | [`F4.5_Costing_Method.sql`](04_Business_Processes/F4.5_Costing_Method.sql) | `4.5_Costing_Method_Assessment.xdm` · Costing_Method_assessment | No | — | Same as the file (v1.1) |
-| **5.1** CEMLI summary (5 cards) | Report table | [`F5.1_Extensions_Summary.sql`](05_Customizations/F5.1_Extensions_Summary.sql) | `5.1_CEMLI_Summary.xdm` · CEMLI | No | — | Same as the file (v2.1) |
-| **5.2** Custom scheduled processes | Report table (first 10 rows) **and** Excel sheet (all rows): one query | [`F5.2_Custom_Scheduled_Processes.sql`](05_Customizations/F5.2_Custom_Scheduled_Processes.sql) | `5.2_Scheduled_Processes.xdm` · Schedule-Processes | **WB7** `Fusion_Discovery_5_2_Custom_Scheduled_Processes.xlsx` | **Sheet 1 of 1:** Custom Scheduled Processes | Same as the file (v1.1) |
+| **5.1** CEMLI summary (5 cards) | Report table | [`F5.1_Extensions_Summary.sql`](05_Customizations/F5.1_Extensions_Summary.sql) | `5.1_CEMLI_Summary.xdm` · CEMLI | No | — | ⚠ **Older:** v2.1 in the data model; the file is **v2.2** (custom prefix). Add the text parameter `p_custom_prefix` |
+| **5.2** Custom scheduled processes | Report table (first 10 rows) **and** Excel sheet (all rows): one query | [`F5.2_Custom_Scheduled_Processes.sql`](05_Customizations/F5.2_Custom_Scheduled_Processes.sql) | `5.2_Scheduled_Processes.xdm` · Schedule-Processes | **WB7** `Fusion_Discovery_5_2_Custom_Scheduled_Processes.xlsx` | **Sheet 1 of 1:** Custom Scheduled Processes | ⚠ **Older:** v1.1 in the data model; the file is **v1.2** (custom prefix). Add the text parameter `p_custom_prefix` |
 | **5.2** ESS history coverage | Report caption, and the WB7 About sheet line | [`F5.2_ESS_History_Coverage.sql`](05_Customizations/F5.2_ESS_History_Coverage.sql) | **Not in the catalog** | **WB7** (as above) | About sheet | No data model yet |
 | **6.1** Data volume trends (6 charts) | Report charts | [`F6.1_Data_Volume_Trends.sql`](06_Data_Volumes_and_Trends/F6.1_Data_Volume_Trends.sql) | `6.1_Data_Trends_And_Volume.xdm` · data_Volume_and_trends | No | — | ⚠ **Older:** v1.1 in the data model; the file is **v1.2** (cancelled POs read from DOCUMENT_STATUS). The data model also stores `sample.xml`. |
 | **6.2** Master data | Report table | [`F6.2_Master_Data.sql`](06_Data_Volumes_and_Trends/F6.2_Master_Data.sql) | `6.2_Master_Data.xdm` · Master_Data | No | — | Same as the file (v1.0) |
-| **7.1** Open transactions summary | Report table | [`F7.1_Open_Transactions.sql`](07_Open_Transactions/F7.1_Open_Transactions.sql) | `7.1_Open_Transaction_Snapshot.xdm` · open_transactions | No | — | Same as the file (v1.3). The data model also stores `sample.xml`. |
-| **7.1** Open transactions by business unit | Excel sheet | [`F7.1_WB_Open_Transactions_By_BU.sql`](07_Open_Transactions/F7.1_WB_Open_Transactions_By_BU.sql) | `7.1_Open_Transaction_By_BU.xdm` · Open_Transaction | **WB8** `Fusion_Discovery_7_1_Open_Transactions_By_BU.xlsx` | **Sheet 1 of 1:** Open Transactions by BU | Same as the file (v1.3) |
+| **7.1** Open transactions summary | Report table | [`F7.1_Open_Transactions.sql`](07_Open_Transactions/F7.1_Open_Transactions.sql) | `7.1_Open_Transaction_Snapshot.xdm` · open_transactions | No | — | ⚠ **Older:** v1.3 in the data model; the file is **v1.4** (a Value on rows 1-8, 2026-10-12). Paste v1.4 into the data model. The data model also stores `sample.xml`. |
+| **7.1** Open transactions by business unit | Excel sheet | [`F7.1_WB_Open_Transactions_By_BU.sql`](07_Open_Transactions/F7.1_WB_Open_Transactions_By_BU.sql) | `7.1_Open_Transaction_By_BU.xdm` · Open_Transaction | **WB8** `Fusion_Discovery_7_1_Open_Transactions_By_BU.xlsx` | **Sheet 1 of 1:** Open Transactions by BU | ⚠ **Older:** v1.3 in the data model; the file is **v1.4** (values on rows 1-8). |
 | **8.1** Report area by type | Report table | [`F8.1_Report_Area_by_Type.sql`](08_Reports_and_BI/F8.1_Report_Area_by_Type.sql) | `8.1_Report_Area_By_Type.xdm` · Report_Inventory_By_Type | No | — | Same as the file (v1.2) |
 | **8.2** Top 10 custom reports with recorded use | Report table | [`F8.2a_Custom_Reports_Used.sql`](08_Reports_and_BI/F8.2a_Custom_Reports_Used.sql) | `8.2_Custom_Reports.xdm` · Custom-Reports_Run | No | — | Same as the file (v1.1) |
 | **8.2** Top 10 custom reports without recorded use | Report table | [`F8.2b_Custom_Reports_Not_Used.sql`](08_Reports_and_BI/F8.2b_Custom_Reports_Not_Used.sql) | `8.2_Custom_Reports.xdm` · Custom_Reports_NotRun | No | — | Same as the file (v1.1) |
@@ -106,11 +108,11 @@ Run these before the report queries of their section. None has a data model in t
 | `V0_3_Explain_Executive_Summary.sql` | What sits behind each executive-summary card |
 | `V1_1_Module_Activity_Evidence.sql` · `V1_2_Find_Offering_Enablement_Objects.sql` | Evidence for the active-module count (1.1) |
 | `V3_0_Columns_Check_Section_3_1.sql` · `V3_1_Columns_Check_Section_3_Workbooks.sql` | Section 3 columns (3.1 table, workbooks, 3.2) |
-| `V4_0_Columns_Check_Section_4.sql` · `V4_1_Code_Values_Section_4.sql` | Section 4 columns and code values |
+| `V4_0_Columns_Check_Section_4.sql` · `V4_1_Code_Values_Section_4.sql` · `V4_2_Inv_Org_Cost_Org_Section_4_5.sql` · `V4_3_O2C_Reconciliation_Section_4_2.sql` · `V4_4_P2P_Reconciliation_Section_4_1.sql` | Section 4 columns and code values; inventory org → cost org (4.5); O2C counts against the consultant's (4.2); what is inside each P2P count (4.1) |
 | `V5_0_Columns_Check_Section_5.sql` · `V5_1_Code_Values_Section_5.sql` | Section 5 columns and code values |
 | `V5_2a_ESS_History_Read_Test.sql` · `V5_2b_ESS_Property_Read_Test.sql` · `V5_2c_ESS_Column_Discovery.sql` · `V5_3_MDS_Discovery.sql` · `V5_4_ESS_Code_Values.sql` · `V5_5_Roles_Approvals_Detail.sql` | Scheduled-process (ESS) history, MDS, roles and approvals, for 5.1 / 5.2 |
 | `V6_0_Columns_Check_Section_6.sql` · `V6_1_Code_Values_Section_6.sql` · `V6_2_Customer_End_Dates_Section_6.sql` | Section 6 columns, code values, customer end dates |
-| `V7_0_Columns_Check_Section_7.sql` · `V7_1_Code_Values_Section_7.sql` | Section 7 columns and code values |
+| `V7_0_Columns_Check_Section_7.sql` · `V7_1_Code_Values_Section_7.sql` · `V7_2_Open_Amounts_Check_Section_7.sql` · `V7_3_Open_Transactions_Reconciliation_Section_7.sql` · `V7_4_Open_Sales_Orders_Check_Section_7.sql` | Section 7 columns, code values, the open amounts (v1.4 values), what is inside each count (V7_3), and the open sales orders in detail (V7_4) |
 | `V8_0_Columns_Check_Section_8.sql` · `V8_1_Code_Values_Section_8.sql` · `V8_2_Used_And_Grain_Diagnostic_Section_8.sql` · `V8_3_ESS_Run_Facts_Section_8.sql` | Section 8 columns, code values, report-use and scheduled-process run facts |
 | `V9_1_Code_Values_Section_9.sql` | Section 9 code values |
 | `V10_0_Columns_Check_Section_10.sql` · `V10_1_Code_Values_Section_10.sql` | Section 10 columns and code values |
@@ -157,21 +159,29 @@ All data models use the data source **ApplicationDB_FSCM** and take the paramete
 
 ## 5. Check before pushing
 
-1. **Four data models hold older SQL than their `.sql` file.** Re-paste the file into the data model if the two must match:
+1. **Data models hold older SQL than their `.sql` file.** Re-paste the file into the data model if the two must match. **Shared block v3.2 (2026-10-13, blank dates = all history) is in the `.sql` files only:** every data model built on the shared block still has the 90-day default, so re-paste them all before the next run. The ones that differ in more than that:
 
    | Data model | Data model has | File has |
    |---|---|---|
    | `0_Executive_Summary_DM` | F0 v1 | v3.1 |
-   | `4.1_P2P_Flow` | v1.2 | v1.3 |
+   | `4.1_P2P_Flow` | v1.2 | v1.5 |
+   | `4.2_O2C_Flow` | v1.1 | v1.3 |
+   | `4.3_R2R` | v1.1 | v1.2 |
    | `6.1_Data_Trends_And_Volume` | v1.1 | v1.2 |
    | `8.2_Custom_Reports` (total_custom_reports) | F8.2c v1.1 | v1.2 |
 
-2. **Thirteen report queries have no data model in the catalog yet:**
+2. **Eight data models cannot take the discovery dates.** Their queries read `:p_from_date` / `:p_to_date`, but the data models define only `p_ledger_id` and `p_bu_id`, so those queries always run with blank dates: all history from shared block v3.2 (2026-10-13) on, the last 90 days before that:
+   - `0_Executive_Summary_DM`, `1.1_Active_Module_Inventory_DM`, `1.2_Dormant_modules_DM`
+   - `4.1_P2P_Flow`, `4.2_O2C_Flow`, `4.3_R2R`, `4.3_Gl_Journal_Sources`
+   - `5.2_Scheduled_Processes`
+
+   Add `p_from_date` and `p_to_date` (string, `YYYY-MM-DD`) to each, as `6.1_Data_Trends_And_Volume` already does.
+3. **Thirteen report queries have no data model in the catalog yet:**
    - the 10 Setup Inventory sheets (WB4)
    - `F2.2_BSV_Legal_Entity_Detail`
    - `F5.2_ESS_History_Coverage`
    - `F10.3_Fusion_Pod_Posture`
-3. **Client data is in some files.** Push to a private repository, or remove these first:
+4. **Client data is in some files.** Push to a private repository, or remove these first:
    - **The three `sample.xml` files hold real output from the client pod**, saved by BIP as sample data. Each is a check-query result, not report data:
      - 1.1 holds the module-activity evidence query, **including client users' login names**.
      - 6.1 and 7.1 hold record counts and statuses.

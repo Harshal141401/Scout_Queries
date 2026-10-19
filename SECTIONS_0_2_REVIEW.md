@@ -84,7 +84,7 @@ Sections 0–2 are unchanged from the Sep 15 run:
 **Parameters (every file, all optional):**
 - `:p_ledger_id`, `:p_bu_id`, `:p_custom_prefix`: the EBS three, with OU → BU.
 - `:p_from_date` and `:p_to_date` (`YYYY-MM-DD`): new. **No fixed dates anywhere.**
-- Blank dates mean the last 90 days to today, the same default as the Scout agent.
+- Blank dates mean all history (shared block v3.2, 2026-10-13). Until then they meant the last 90 days to today, the same default as the Scout agent.
 - Blank ledger means the whole pod.
 
 ## 3. Fusion facts behind the rebuild (checked against Oracle's Tables and Views guides, 2026-09-30)

@@ -34,7 +34,7 @@ Output: `MODULE | MONTH | MONTH_LABEL | COUNT`, one row per module × month, wit
 | GL Journals | GL_JE_HEADERS | creation date | posted (STATUS P), ledger scope |
 
 **Logic changes from the June draft (14_S6.1):**
-- **Window:** the dates were hard-coded (2026-01-01 → 2026-10-01) under Apr-25 → Sep-25 headings. The chart window now comes from the run's dates. With blank dates it is the last 6 months up to today (v1.1). This is the only query where blank dates do not mean the last 90 days.
+- **Window:** the dates were hard-coded (2026-01-01 → 2026-10-01) under Apr-25 → Sep-25 headings. The chart window now comes from the run's dates. With blank dates it is the last 6 months up to today (v1.1). This is the only windowed query where blank dates do not mean all history (shared block v3.2, 2026-10-13; the last 90 days before that). F6.1 keeps the v3.1 window block, because an open-ended to-date would move the chart to the year 9999.
 - **Months:** months were matched on month number with no year, so Jan-26 and Jan-25 merged. They are now real calendar months.
 - **Dates:** AP, AR and orders used the creation date. They now use the EBS business dates.
 - **Parameters:** a blank ledger zeroed every chart. Blank now means the whole pod.
@@ -71,12 +71,12 @@ Output: `Entity | Active | Total`.
 | C42 | V6_0: every row ALL OK. ✅ R020 |
 | C43 | V6_1 verdicts B0 / D0 / E0 OK. Grain block F shows the rows-vs-keys ratios. ✅ R021 |
 | C44 | F6.2 Internal bank accounts **Active** = F3.1 row 10 (same parameters) |
-| C45 | With F4.x run on the chart's 6 months: chart 5 sum = F4.1 AP invoices; chart 6 sum = F4.3 GL journals; chart 1 sum = F4.2 Sales Orders + RMA |
+| C45 | With F4.x run on the chart's 6 months: chart 5 sum = F4.1 AP invoices; chart 6 sum = F4.3 GL journals; chart 1 sum = F4.2 v1.2 Sales Orders + RMA. F4.2 v1.3 counts submitted orders only, RMAs included, so chart 1 sum = F4.2 Sales Orders + the never-submitted orders of those months (V4_3 rows 3 + 5, same dates) |
 | C46 | F6.2 pod-wide rows = R021: Supplier sites Total 2,578 · Customer parties 284 / 284 · accounts 285 / 285 · sites 1,096 / 1,096 · Items Active = Total, 10,347–10,359 · banks ≤ 6 |
 | C47 | V6_2 A0 / B0 OK (no end-dated customer account or site still says STATUS A) |
 
 ## What R021 showed (pod facts)
 
-- **Sales orders:** 11,703 DOO header rows hold 6,988 orders, so 40% of the rows are revisions. At least 1,077 orders were never submitted (drafts). They are counted when their ordered date falls in the window, as in F4.2. EBS also counts unbooked orders.
+- **Sales orders:** 11,703 DOO header rows hold 6,988 orders, so 40% of the rows are revisions. At least 1,077 orders were never submitted (drafts). F6.1 counts them when their ordered date falls in the window, as F4.2 did up to v1.2. EBS also counts unbooked orders. F4.2 v1.3 (2026-10-13) counts submitted orders only, the consultant's rule (V4_3: 1,078 never submitted).
 - **Items:** templates are 12 rows of EGP_SYSTEM_ITEMS_B, all with ENABLED_FLAG empty. Every other row has ENABLED_FLAG Y, so the EBS "enabled" rule gives Active = Total. EBS Vision shows the same (6,769 / 6,769). Mirrored as is; using Fusion's item status instead would change the metric in both reports.
 - **Sites:** supplier sites and customer account sites have one row per key, so the F3.1 Payment Terms AP sheet counts per site, as intended.
