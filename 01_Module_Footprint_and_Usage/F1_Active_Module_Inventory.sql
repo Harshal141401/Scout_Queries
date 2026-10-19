@@ -1,6 +1,9 @@
 -- ============================================================================
 --  F1  Section 1.1 Active module inventory - ACTIVE modules only
---  Version   : shared block v3.2 (2026-10-13) - blank dates now mean all
+--  Version   : shared block v3.3 (2026-10-16) - a BU now narrows the
+--              ledger, inventory-org and asset-book scopes too (manager
+--              feedback: per-BU counts); blank BU: unchanged.
+--              v3.2 (2026-10-13) - blank dates now mean all
 --              history (no lower / upper bound), not the last 90 days; only
 --              the win block changed. v3.1 (2026-10-01) - modules read from
 --              FND_TABLES -> FND_APPLICATION_VL.
@@ -15,6 +18,11 @@
 --  PARAMETERS  (all optional - BIP passes them as strings)
 --    :p_ledger_id      GL_LEDGERS.LEDGER_ID        blank = every ledger
 --    :p_bu_id          business unit (BU_ID)       blank = every BU of the ledger
+--                      v3.3: a BU narrows BU modules (AP, AR, PO, OM, CE,
+--                      PA, EXM, leases) to itself, GL / costing / assets to its
+--                      primary ledger, and INV / shipping / WIE / BOM to its
+--                      inventory orgs (INV_ORGANIZATION_DEFINITIONS_V.
+--                      BUSINESS_UNIT_ID)
 --    :p_custom_prefix  accepted, not used here     (parameter parity)
 --    :p_from_date      'YYYY-MM-DD'                blank = no lower bound
 --    :p_to_date        'YYYY-MM-DD' (inclusive)    blank = no upper bound
@@ -92,6 +100,12 @@ led_scope AS (
     WHERE  gl.object_type_code = 'L'
     AND    NVL(gl.complete_flag, 'Y') = 'Y'
     AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the ledgers to its primary ledger
+    AND    (p.p_bu_id IS NULL
+            OR EXISTS ( SELECT 1
+                        FROM   fun_all_business_units_v bx
+                        WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                        AND    TRIM(bx.primary_ledger_id) = TO_CHAR(gl.ledger_id) ))
 ),
 -- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
 -- so it is compared as a string. A BU whose classification STATUS is
@@ -113,6 +127,8 @@ inv_org_scope AS (
     FROM   inv_organization_definitions_v iod
     CROSS  JOIN params p
     WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the inventory orgs to its own (the org's business unit)
+    AND    (p.p_bu_id IS NULL OR iod.business_unit_id = TO_NUMBER(p.p_bu_id))
     GROUP  BY iod.organization_id
 ),
 fa_book_scope AS (
@@ -120,6 +136,12 @@ fa_book_scope AS (
     FROM   fa_book_controls fbc
     CROSS  JOIN params p
     WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the asset books to its primary ledger's
+    AND    (p.p_bu_id IS NULL
+            OR EXISTS ( SELECT 1
+                        FROM   fun_all_business_units_v bx
+                        WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                        AND    TRIM(bx.primary_ledger_id) = TO_CHAR(fbc.set_of_books_id) ))
     GROUP  BY fbc.book_type_code
 ),
 -- ---- ACTIVITY ROWS: identical in F0 and F1 -------------------------------

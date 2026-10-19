@@ -39,7 +39,9 @@
 --
 --  PARAMETERS  :p_ledger_id optional; bound -> that ledger's family (primary
 --              + secondary/reporting). Others accepted, not used.
---  Version   : 1.1 (2026-10-01: output trimmed to the report's 5 columns;
+--  Version   : 1.2 (2026-10-16): Values printed as a whole number (manager
+--              feedback: it showed 13.00). The count is unchanged.
+--              1.1 (2026-10-01: output trimmed to the report's 5 columns;
 --              1.0 built 2026-09-30). Not yet run on a pod.
 --  RUN V0_1 AND V0_2 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
 -- ============================================================================
@@ -160,7 +162,9 @@ SELECT
     s.application_column_name                                 AS "Segment",
     s.seg_label                                               AS "Name",
     NVL(q.qualifiers, '-')                                    AS "Qualifier",
-    NVL(vc.n, 0)                                              AS "Values",
+    -- v1.2: whole-number text, so BIP (which types a computed count as a
+    -- double) and the report renderer never print 13.00
+    TO_CHAR(NVL(vc.n, 0))                                     AS "Values",
     s.display_size                                            AS "Size"
 FROM        coa         c
 JOIN        seg         s  ON s.id_flex_num = c.chart_of_accounts_id

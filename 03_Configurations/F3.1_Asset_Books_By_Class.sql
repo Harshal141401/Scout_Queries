@@ -1,6 +1,7 @@
 -- ============================================================================
 --  F3.1b  Section 3.1 "Asset books by class and status"
---  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--  Version   : 1.1 (2026-10-16). Not yet run on a pod. v1.1: a BU narrows
+--              the books to its primary ledger's (as F3.1 v1.1 row 12).
 --              RUN V3_0 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
 --  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
 --  Mirrors   : EBS agent _asset_books_sql + utils/asset_books.asset_book_counts
@@ -16,7 +17,7 @@
 --    population   FA_BOOK_CONTROLS, UPPER(BOOK_CLASS) IN ('CORPORATE','TAX')
 --                 - reviewer rule: budget and other classes excluded
 --    scope        SET_OF_BOOKS_ID = :p_ledger_id when bound; blank = every
---                 ledger. :p_bu_id is ignored (a book follows its ledger).
+--                 ledger. :p_bu_id: its primary ledger's books (v1.1).
 --    Disabled     DATE_INEFFECTIVE <= SYSDATE (measured at run time)
 --    Not Disabled everything else, including a NULL DATE_INEFFECTIVE
 --  RECONCILES  Total / Configured = F3.1 row 12 "Configured asset books"
@@ -39,6 +40,12 @@ book_rows AS (
     WHERE       UPPER(fbc.book_class) IN ('CORPORATE', 'TAX')
     AND         ( p.p_ledger_id IS NULL
                   OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id) )
+    -- v1.1: a BU narrows to its primary ledger's books
+    AND         ( p.p_bu_id IS NULL
+                  OR EXISTS ( SELECT 1
+                              FROM   fun_all_business_units_v bx
+                              WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                              AND    TRIM(bx.primary_ledger_id) = TO_CHAR(fbc.set_of_books_id) ) )
 ),
 -- the two reported classes, in report order (the filter codes above)
 book_classes AS (

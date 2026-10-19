@@ -1,6 +1,11 @@
 -- ============================================================================
 --  F3.1  Section 3.1 Setup area by module
---  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--  Version   : 1.1 (2026-10-16). Not yet run on a pod.
+--              v1.1 (manager feedback, per-BU counts): when bound, row 9
+--              counts the subinventories of the inventory orgs in scope, and a
+--              BU narrows row 12 to its primary ledger's books. Blank
+--              ledger and BU: every row unchanged.
+--              v1.0 (2026-10-05).
 --              RUN V3_0 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
 --  Source    : Oracle Fusion Cloud (BIP data model, data source ApplicationDB_FSCM)
 --  Mirrors   : the EBS logic that PRODUCED the report (agent
@@ -54,7 +59,8 @@
 --                             Model) - in Fusion templates are not INV setup.
 --   9 Subinventories          EBS COUNT(*) MTL_SECONDARY_INVENTORIES (all, incl.
 --                             disabled) -> INV_SECONDARY_INVENTORIES, PK
---                             SECONDARY_INVENTORY_NAME + ORGANIZATION_ID. Pod-wide.
+--                             SECONDARY_INVENTORY_NAME + ORGANIZATION_ID. Pod-wide
+--                             when unbound; bound: the orgs in scope (v1.1).
 --  10 Active internal bank    EBS: CE_BANK_ACCOUNTS ACCOUNT_CLASSIFICATION =
 --     accounts               'INTERNAL', NVL(END_DATE, SYSDATE+1) > SYSDATE;
 --                             bound runs add EXISTS a use by an in-scope OU.
@@ -79,10 +85,13 @@
 --    narrowed when :p_ledger_id or :p_bu_id is set
 --      7 PO Document Types        PRC_BU_ID in the in-scope BUs
 --      10 Bank accounts           a use (ORG_ID) by an in-scope BU
---      12 Asset books             SET_OF_BOOKS_ID = :p_ledger_id (BU ignored -
---                                 a book follows its ledger, EBS parity)
+--      9 Subinventories           v1.1: orgs in scope - the org's ledger
+--                                 (SET_OF_BOOKS_ID) and business unit
+--                                 (BUSINESS_UNIT_ID), the shared-block rule
+--      12 Asset books             SET_OF_BOOKS_ID = :p_ledger_id; v1.1: a BU
+--                                 narrows to its primary ledger's books
 --    never narrowed (pod-wide in every mode)
---      1, 2, 5, 6, 8, 9, 11       system-wide setup, exactly as EBS
+--      1, 2, 5, 6, 8, 11          system-wide setup, exactly as EBS
 --      3, 4 AR types / sources    EBS narrowed these by ORG_ID. In Fusion they
 --                                 are owned by a reference data SET, not a BU
 --                                 (sources have no ORG_ID at all), so they are
@@ -123,6 +132,16 @@ bu_scope AS (
     AND    (p.p_ledger_id IS NULL OR bu.primary_ledger_id = TRIM(p.p_ledger_id))
     AND    (p.p_bu_id     IS NULL OR bu.bu_id = TO_NUMBER(p.p_bu_id))
     GROUP  BY bu.bu_id
+),
+-- v1.1: inventory orgs in scope when bound - the shared-block rule (v3.3):
+-- the org's ledger = :p_ledger_id, its business unit = :p_bu_id
+inv_org_scope AS (
+    SELECT iod.organization_id
+    FROM   inv_organization_definitions_v iod
+    CROSS  JOIN params p
+    WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    AND    (p.p_bu_id     IS NULL OR iod.business_unit_id = TO_NUMBER(p.p_bu_id))
+    GROUP  BY iod.organization_id
 ),
 -- ---- 1 AP Payment Terms (pod-wide) -----------------------------------------
 ap_terms_cnt AS (
@@ -175,10 +194,14 @@ item_template_cnt AS (
             WHERE  NVL(i.template_item_flag, 'N') = 'Y'
             GROUP  BY i.inventory_item_id )
 ),
--- ---- 9 Subinventories (pod-wide, incl. disabled - EBS parity) --------------
+-- ---- 9 Subinventories (incl. disabled - EBS parity; v1.1: the orgs in scope
+--      when bound) ----------------------------------------------------------
 subinv_cnt AS (
     SELECT COUNT(*) AS cnt
-    FROM   inv_secondary_inventories
+    FROM        inv_secondary_inventories si
+    CROSS JOIN  scope_flag f
+    WHERE       f.is_bound = 0
+       OR       si.organization_id IN ( SELECT o.organization_id FROM inv_org_scope o )
 ),
 -- ---- 10 Active internal bank accounts (narrowed by BU use when bound) ------
 int_bank_acct_cnt AS (
@@ -206,6 +229,12 @@ asset_book_cnt AS (
     WHERE       UPPER(fbc.book_class) IN ('CORPORATE', 'TAX')
     AND         ( p.p_ledger_id IS NULL
                   OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id) )
+    -- v1.1: a BU narrows to its primary ledger's books
+    AND         ( p.p_bu_id IS NULL
+                  OR EXISTS ( SELECT 1
+                              FROM   fun_all_business_units_v bx
+                              WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                              AND    TRIM(bx.primary_ledger_id) = TO_CHAR(fbc.set_of_books_id) ) )
 ),
 -- ---- the 12 rows, report order; src_table = the table the row counts -------
 setup_rows AS (

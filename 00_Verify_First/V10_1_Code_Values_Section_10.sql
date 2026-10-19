@@ -45,7 +45,7 @@
 --  Pure SELECT. Nothing is written.
 -- ============================================================================
 WITH
--- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.2).
+-- ---- PARAMS / WINDOW / SCOPE: copied unchanged from F1 (shared block v3.3).
 --      Nothing in it is read here; it is kept for parity with every other
 --      query. The discovery window (win) is NOT used.
 params AS (
@@ -70,6 +70,12 @@ led_scope AS (
     WHERE  gl.object_type_code = 'L'
     AND    NVL(gl.complete_flag, 'Y') = 'Y'
     AND    (p.p_ledger_id IS NULL OR gl.ledger_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the ledgers to its primary ledger
+    AND    (p.p_bu_id IS NULL
+            OR EXISTS ( SELECT 1
+                        FROM   fun_all_business_units_v bx
+                        WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                        AND    TRIM(bx.primary_ledger_id) = TO_CHAR(gl.ledger_id) ))
 ),
 -- FUN_ALL_BUSINESS_UNITS_V.PRIMARY_LEDGER_ID is ORG_INFORMATION3 (a string),
 -- so it is compared as a string. A BU whose classification STATUS is
@@ -91,6 +97,8 @@ inv_org_scope AS (
     FROM   inv_organization_definitions_v iod
     CROSS  JOIN params p
     WHERE  (p.p_ledger_id IS NULL OR iod.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the inventory orgs to its own (the org's business unit)
+    AND    (p.p_bu_id IS NULL OR iod.business_unit_id = TO_NUMBER(p.p_bu_id))
     GROUP  BY iod.organization_id
 ),
 fa_book_scope AS (
@@ -98,6 +106,12 @@ fa_book_scope AS (
     FROM   fa_book_controls fbc
     CROSS  JOIN params p
     WHERE  (p.p_ledger_id IS NULL OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id))
+    -- v3.3: a BU narrows the asset books to its primary ledger's
+    AND    (p.p_bu_id IS NULL
+            OR EXISTS ( SELECT 1
+                        FROM   fun_all_business_units_v bx
+                        WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                        AND    TRIM(bx.primary_ledger_id) = TO_CHAR(fbc.set_of_books_id) ))
     GROUP  BY fbc.book_type_code
 ),
 -- ---- SECTION 10 BLOCK v1.0 (2026-10-07): scheduled-process load, languages,

@@ -1,13 +1,15 @@
 -- ============================================================================
 --  F3.1 WB  Setup Inventory workbook - sheet "FA Asset Books"
---  Version   : 1.0 (2026-10-05). Not yet run on a pod.
+--  Version   : 1.1 (2026-10-16). Not yet run on a pod. v1.1: a BU narrows
+--              the books to its primary ledger's (as F3.1 v1.1 row 12).
 --              RUN V3_1 FIRST. Log every run in 06_Run_Results/RUN_LOG.md.
 --  Mirrors   : EBS agent _asset_books_sql (the same rows feed the 3.1 FA count
 --              and the class/status breakdown)
 --  RECONCILES  row count = F3.1 row 12 "Configured asset books"
 --              = F3.1b Total / Configured. Same filter: UPPER(BOOK_CLASS) IN
 --              ('CORPORATE','TAX'), disabled books included,
---              SET_OF_BOOKS_ID = :p_ledger_id when bound.
+--              SET_OF_BOOKS_ID = :p_ledger_id when bound; a BU: its primary
+--              ledger's books (v1.1).
 --
 --  COLUMNS  BOOK_NAME, BOOK_CLASS, STATUS, SOURCE_CORPORATE_BOOK, LEDGER,
 --           DISABLE_DATE, GL_POSTING_ALLOWED (EBS order)
@@ -46,4 +48,10 @@ LEFT JOIN   ledger_names     ln ON ln.ledger_id = fbc.set_of_books_id
 WHERE       UPPER(fbc.book_class) IN ('CORPORATE', 'TAX')
 AND         ( p.p_ledger_id IS NULL
               OR fbc.set_of_books_id = TO_NUMBER(p.p_ledger_id) )
+-- v1.1: a BU narrows to its primary ledger's books
+AND         ( p.p_bu_id IS NULL
+              OR EXISTS ( SELECT 1
+                          FROM   fun_all_business_units_v bx
+                          WHERE  bx.bu_id = TO_NUMBER(p.p_bu_id)
+                          AND    TRIM(bx.primary_ledger_id) = TO_CHAR(fbc.set_of_books_id) ) )
 ORDER BY    fbc.book_class, fbc.book_type_code
